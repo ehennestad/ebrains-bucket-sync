@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ehennestad/ebrains-sync/spec/sync-plan.schema.json",
+  "title": "Sync plan",
+  "description": "The plan of a sync and, after a run, the outcome of each action.",
+  "type": "object",
+  "properties": {
+    "format": { "const": "ebrains-sync-plan" },
+    "version": { "const": 1 },
+    "direction": { "enum": ["to_bucket", "from_bucket"] },
+    "bucket": { "type": "string" },
+    "prefix": {
+      "description": "Folder of the bucket, ending with \"/\", or \"\" for the root.",
+      "type": "string"
+    },
+    "local_folder": { "type": "string" },
+    "policy": { "$ref": "sync-policy.schema.json" },
+    "dry_run": { "type": "boolean" },
+    "refusal": {
+      "description": "Why the run stopped, or would stop, before changing anything; \"\" otherwise.",
+      "type": "string"
+    },
+    "actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string" },
+          "action": { "enum": ["upload", "download", "delete", "none"] },
+          "reason": { "enum": ["new", "size", "newer", "checksum", "unchanged", "extraneous"] },
+          "bytes": { "type": "integer", "minimum": 0 },
+          "status": { "enum": ["done", "failed", "skipped", "planned", ""] },
+          "message": { "type": "string" }
+        },
+        "required": ["path", "action", "reason", "bytes", "status", "message"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["format", "version", "direction", "bucket", "prefix", "local_folder", "policy", "dry_run", "refusal", "actions"],
+  "additionalProperties": false
+}

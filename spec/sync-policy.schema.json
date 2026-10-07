@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ehennestad/ebrains-sync/spec/sync-policy.schema.json",
+  "title": "Sync policy",
+  "description": "How a sync decides what to transfer and delete.",
+  "type": "object",
+  "properties": {
+    "comparison": {
+      "description": "How a file on both sides is judged changed.",
+      "enum": ["SizeAndTime", "Size", "Checksum"]
+    },
+    "delete": {
+      "description": "Delete the files of the target that the source does not have.",
+      "type": "boolean"
+    },
+    "exclude": {
+      "description": "Wildcard patterns of paths to leave out.",
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "max_delete": {
+      "description": "Most files the sync may delete; null for no limit.",
+      "type": ["integer", "null"],
+      "minimum": 0
+    }
+  },
+  "required": ["comparison", "delete", "exclude", "max_delete"],
+  "additionalProperties": false
+}
