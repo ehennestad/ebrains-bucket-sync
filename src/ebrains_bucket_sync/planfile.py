@@ -12,7 +12,7 @@ from typing import Any
 from .model import ActionResult, SyncOptions
 from .paths import normalize_prefix
 
-PLAN_FORMAT = "ebrains-sync-plan"
+PLAN_FORMAT = "ebrains-bucket-sync-plan"
 PLAN_VERSION = 1
 
 

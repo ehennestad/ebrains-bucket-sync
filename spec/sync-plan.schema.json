@@ -1,11 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/ehennestad/ebrains-sync/spec/sync-plan.schema.json",
+  "$id": "https://github.com/ehennestad/ebrains-bucket-sync/spec/sync-plan.schema.json",
   "title": "Sync plan",
   "description": "The plan of a sync and, after a run, the outcome of each action.",
   "type": "object",
   "properties": {
-    "format": { "const": "ebrains-sync-plan" },
+    "format": { "const": "ebrains-bucket-sync-plan" },
     "version": { "const": 1 },
     "direction": { "enum": ["to_bucket", "from_bucket"] },
     "bucket": { "type": "string" },

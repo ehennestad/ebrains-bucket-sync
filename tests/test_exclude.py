@@ -1,4 +1,4 @@
-from ebrains_sync.exclude import exclude_files, pattern_to_regex
+from ebrains_bucket_sync.exclude import exclude_files, pattern_to_regex
 
 from .conftest import entry
 

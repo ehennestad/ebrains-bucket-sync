@@ -206,20 +206,7 @@ wheels = [
 ]
 
 [[package]]
-name = "ebrains-drive"
-version = "0.7.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "requests" },
-    { name = "tqdm" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/e2/89/8f9d7f6fe3182b5c64ae72a039f06b3fdeeffdd984016528949a548a1841/ebrains_drive-0.7.0.tar.gz", hash = "sha256:028a181bb114099d10ef09be40bc0626e254e3bdd99af9057bade885a9f1d5fa", size = 134957, upload-time = "2026-10-02T11:34:20.759Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/ee/4f/2f8c63fbc5821165804d32ad52131219383090262aee09fda41d06125178/ebrains_drive-0.7.0-py3-none-any.whl", hash = "sha256:09fcd6811e6e26acdd39ec5dcaca7e54090ab4f3f07d304cd39e99a2b08e2635", size = 32564, upload-time = "2026-10-02T11:34:19.606Z" },
-]
-
-[[package]]
-name = "ebrains-sync"
+name = "ebrains-bucket-sync"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
@@ -252,11 +239,24 @@ dev = [
 ]
 
 [[package]]
+name = "ebrains-drive"
+version = "0.7.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "requests" },
+    { name = "tqdm" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e2/89/8f9d7f6fe3182b5c64ae72a039f06b3fdeeffdd984016528949a548a1841/ebrains_drive-0.7.0.tar.gz", hash = "sha256:028a181bb114099d10ef09be40bc0626e254e3bdd99af9057bade885a9f1d5fa", size = 134957, upload-time = "2026-10-02T11:34:20.759Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ee/4f/2f8c63fbc5821165804d32ad52131219383090262aee09fda41d06125178/ebrains_drive-0.7.0-py3-none-any.whl", hash = "sha256:09fcd6811e6e26acdd39ec5dcaca7e54090ab4f3f07d304cd39e99a2b08e2635", size = 32564, upload-time = "2026-10-02T11:34:19.606Z" },
+]
+
+[[package]]
 name = "exceptiongroup"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.11'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/50/79/66800aadf48771f6b62f7eb014e352e5d06856655206165d775e675a02c9/exceptiongroup-1.3.1.tar.gz", hash = "sha256:8b412432c6055b0b7d14c310000ae93352ed6754f70fa8f7c34141f91c4e3219", size = 30371, upload-time = "2025-11-21T23:01:54.787Z" }
 wheels = [

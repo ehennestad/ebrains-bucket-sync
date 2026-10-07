@@ -1,4 +1,4 @@
-# ebrains-sync
+# ebrains-bucket-sync
 
 Sync a local folder to an EBRAINS Data Proxy bucket, the way rsync does: only new and changed files are uploaded, so a sync that is interrupted picks up where it stopped when run again.
 
@@ -7,14 +7,14 @@ The sync rules are shared with the `ebrains.bucket.sync` functions of the [EBRAI
 ## Install
 
 ```bash
-uv tool install git+https://github.com/ehennestad/ebrains-sync
+uv tool install git+https://github.com/ehennestad/ebrains-bucket-sync
 ```
 
 or, for development:
 
 ```bash
-git clone https://github.com/ehennestad/ebrains-sync
-cd ebrains-sync
+git clone https://github.com/ehennestad/ebrains-bucket-sync
+cd ebrains-bucket-sync
 uv sync --dev
 uv run pytest
 ```
@@ -24,14 +24,14 @@ uv run pytest
 Log in once. A link opens the EBRAINS login in the browser, and the login is kept for later runs:
 
 ```bash
-ebrains-sync login
+ebrains-bucket-sync login
 ```
 
 See what a sync would do, then run it:
 
 ```bash
-ebrains-sync push results my-bucket --prefix results --dry-run
-ebrains-sync push results my-bucket --prefix results
+ebrains-bucket-sync push results my-bucket --prefix results --dry-run
+ebrains-bucket-sync push results my-bucket --prefix results
 ```
 
 Object names are the paths relative to the local folder. Files the bucket already has, with the same size and uploaded after the local file was last changed, are not sent again. `--comparison Size` ignores the times, and `--comparison Checksum` compares the MD5 of every file of the same size.
@@ -45,7 +45,12 @@ An upload that fails does not stop the sync. The other files are uploaded, nothi
 From Python:
 
 ```python
-from ebrains_sync import DeviceFlowAuthenticator, EbrainsDriveStorage, SyncOptions, sync_to_bucket
+from ebrains_bucket_sync import (
+    DeviceFlowAuthenticator,
+    EbrainsDriveStorage,
+    SyncOptions,
+    sync_to_bucket,
+)
 
 storage = EbrainsDriveStorage(DeviceFlowAuthenticator())
 results = sync_to_bucket(
@@ -57,8 +62,8 @@ for result in results:
 
 ## Authentication
 
-The login uses the OAuth device flow with the same OIDC client as the MATLAB toolbox, so both tools show up as one application in your EBRAINS account. The tokens are kept in the user's configuration folder, in a file only the user can read, and the access token is renewed from the refresh token without a new login for as long as the refresh token lasts. In CI, set `EBRAINS_SYNC_TOKEN` to an access token instead.
+The login uses the OAuth device flow with the same OIDC client as the MATLAB toolbox, so both tools show up as one application in your EBRAINS account. The tokens are kept in the user's configuration folder, in a file only the user can read, and the access token is renewed from the refresh token without a new login for as long as the refresh token lasts. In CI, set `EBRAINS_BUCKET_SYNC_TOKEN` to an access token instead.
 
 ## Development
 
-The live tests in `tests/live` run against a real bucket and are skipped unless `EBRAINS_SYNC_TEST_BUCKET` names one. Everything else runs offline against an in-memory bucket.
+The live tests in `tests/live` run against a real bucket and are skipped unless `EBRAINS_BUCKET_SYNC_TEST_BUCKET` names one. Everything else runs offline against an in-memory bucket.

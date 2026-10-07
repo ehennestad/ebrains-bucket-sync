@@ -26,7 +26,7 @@ CLIENT_ID = "ebrains-services-toolbox-matlab"
 DEFAULT_SCOPES = ("openid", "profile", "email", "team", "offline_access")
 """team lets the Data Proxy see the user's collabs; offline_access gives a
 refresh token that outlives the session."""
-ENV_TOKEN = "EBRAINS_SYNC_TOKEN"
+ENV_TOKEN = "EBRAINS_BUCKET_SYNC_TOKEN"
 """An access token in this variable is used as it is, for CI and scripts."""
 DEVICE_CODE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
 ACCESS_TOKEN_MARGIN_SECONDS = 60
@@ -74,7 +74,7 @@ class TokenStore:
     """The tokens of the user, in a file only the user can read."""
 
     def __init__(self, path: Path | None = None) -> None:
-        self.path = path or Path(user_config_dir("ebrains-sync")) / "tokens.json"
+        self.path = path or Path(user_config_dir("ebrains-bucket-sync")) / "tokens.json"
 
     def load(self) -> TokenSet | None:
         try:

@@ -7,7 +7,7 @@ from collections import deque
 
 import pytest
 
-from ebrains_sync.auth import (
+from ebrains_bucket_sync.auth import (
     DEVICE_CODE_GRANT,
     ENV_TOKEN,
     AuthError,

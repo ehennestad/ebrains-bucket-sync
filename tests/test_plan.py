@@ -3,8 +3,8 @@ from datetime import timedelta
 
 import pytest
 
-from ebrains_sync.model import PlanItem
-from ebrains_sync.plan import deletion_refusal, plan_sync
+from ebrains_bucket_sync.model import PlanItem
+from ebrains_bucket_sync.plan import deletion_refusal, plan_sync
 
 from .conftest import entry, utc
 

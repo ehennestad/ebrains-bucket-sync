@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/ehennestad/ebrains-sync/spec/sync-policy.schema.json",
+  "$id": "https://github.com/ehennestad/ebrains-bucket-sync/spec/sync-policy.schema.json",
   "title": "Sync policy",
   "description": "How a sync decides what to transfer and delete.",
   "type": "object",

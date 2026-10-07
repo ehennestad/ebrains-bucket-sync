@@ -1,6 +1,6 @@
 # Sync contract
 
-The rules that decide what a sync does, shared by this package and the `ebrains.bucket.sync` functions of the EBRAINS MATLAB toolbox. The Python planner in `src/ebrains_sync/plan.py` is the reference implementation. Both implementations must pass the fixtures in `fixtures/`, which is what keeps them in step: a change to the rules is a change to the fixtures first.
+The rules that decide what a sync does, shared by this package and the `ebrains.bucket.sync` functions of the EBRAINS MATLAB toolbox. The Python planner in `src/ebrains_bucket_sync/plan.py` is the reference implementation. Both implementations must pass the fixtures in `fixtures/`, which is what keeps them in step: a change to the rules is a change to the fixtures first.
 
 ## File entries
 

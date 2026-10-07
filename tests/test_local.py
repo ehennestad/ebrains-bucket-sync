@@ -2,7 +2,7 @@ from datetime import timezone
 
 import pytest
 
-from ebrains_sync.local import compute_md5, list_local_files
+from ebrains_bucket_sync.local import compute_md5, list_local_files
 
 from .conftest import write
 

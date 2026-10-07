@@ -6,10 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from ebrains_sync.exclude import exclude_files
-from ebrains_sync.model import FileEntry, PlanItem
-from ebrains_sync.plan import deletion_refusal, plan_sync
-from ebrains_sync.remote import parse_listing_time
+from ebrains_bucket_sync.exclude import exclude_files
+from ebrains_bucket_sync.model import FileEntry, PlanItem
+from ebrains_bucket_sync.plan import deletion_refusal, plan_sync
+from ebrains_bucket_sync.remote import parse_listing_time
 
 FIXTURES = Path(__file__).resolve().parents[1] / "spec" / "fixtures"
 

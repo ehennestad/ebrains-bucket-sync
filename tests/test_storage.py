@@ -5,8 +5,8 @@ from types import SimpleNamespace
 import pytest
 from ebrains_drive.exceptions import ClientHttpError, Unauthorized
 
-import ebrains_sync.storage as storage_module
-from ebrains_sync.storage import EbrainsDriveStorage, is_transient_error
+import ebrains_bucket_sync.storage as storage_module
+from ebrains_bucket_sync.storage import EbrainsDriveStorage, is_transient_error
 
 from .conftest import write
 

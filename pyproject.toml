@@ -1,5 +1,5 @@
 [project]
-name = "ebrains-sync"
+name = "ebrains-bucket-sync"
 version = "0.1.0"
 description = "Sync a local folder to an EBRAINS Data Proxy bucket, sending only new and changed files"
 readme = "README.md"
@@ -24,10 +24,10 @@ dependencies = [
 ]
 
 [project.scripts]
-ebrains-sync = "ebrains_sync.cli:main"
+ebrains-bucket-sync = "ebrains_bucket_sync.cli:main"
 
 [project.urls]
-Repository = "https://github.com/ehennestad/ebrains-sync"
+Repository = "https://github.com/ehennestad/ebrains-bucket-sync"
 
 [dependency-groups]
 dev = [
@@ -41,7 +41,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/ebrains_sync"]
+packages = ["src/ebrains_bucket_sync"]
 
 [tool.ruff]
 line-length = 100
@@ -52,4 +52,4 @@ select = ["E", "F", "W", "I", "UP", "B"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["live: needs an EBRAINS login and a test bucket (EBRAINS_SYNC_TEST_BUCKET)"]
+markers = ["live: needs an EBRAINS login and a test bucket (EBRAINS_BUCKET_SYNC_TEST_BUCKET)"]

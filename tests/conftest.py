@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from ebrains_sync.model import FileEntry, RemoteObject
+from ebrains_bucket_sync.model import FileEntry, RemoteObject
 
 
 def md5_of(content: bytes) -> str:

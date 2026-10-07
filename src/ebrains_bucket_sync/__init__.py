@@ -18,7 +18,7 @@ from .plan import deletion_refusal, plan_sync
 from .storage import EbrainsDriveStorage, StaticToken
 
 try:
-    __version__ = version("ebrains-sync")
+    __version__ = version("ebrains-bucket-sync")
 except PackageNotFoundError:  # running from a checkout that is not installed
     __version__ = "0+unknown"
 

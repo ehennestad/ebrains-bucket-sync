@@ -1,7 +1,11 @@
 import pytest
 
-from ebrains_sync.model import SyncWarning
-from ebrains_sync.remote import MAX_SINGLE_OBJECT_BYTES, list_remote_files, parse_listing_time
+from ebrains_bucket_sync.model import SyncWarning
+from ebrains_bucket_sync.remote import (
+    MAX_SINGLE_OBJECT_BYTES,
+    list_remote_files,
+    parse_listing_time,
+)
 
 from .conftest import FakeStorage, utc
 

@@ -1,4 +1,4 @@
-"""Command line of ebrains-sync."""
+"""Command line of ebrains-bucket-sync."""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ def make_storage() -> BucketStorage:
 
 
 @click.group()
-@click.version_option(package_name="ebrains-sync")
+@click.version_option(package_name="ebrains-bucket-sync")
 def main() -> None:
     """Sync local folders with EBRAINS Data Proxy buckets."""
     warnings.simplefilter("always", SyncWarning)

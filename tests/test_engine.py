@@ -2,8 +2,8 @@ import math
 
 import pytest
 
-from ebrains_sync.engine import SyncEvent, SyncRefused, sync_to_bucket
-from ebrains_sync.model import SyncOptions, SyncWarning
+from ebrains_bucket_sync.engine import SyncEvent, SyncRefused, sync_to_bucket
+from ebrains_bucket_sync.model import SyncOptions, SyncWarning
 
 from .conftest import FakeStorage, write
 
@@ -183,7 +183,7 @@ def test_by_checksum_uploads_changed_content_only(folder, storage: FakeStorage):
 
     def md5(path):
         hashed.append(path.name)
-        from ebrains_sync.local import compute_md5
+        from ebrains_bucket_sync.local import compute_md5
 
         return compute_md5(path)
 

@@ -1,6 +1,6 @@
-"""Push to a real bucket. Needs EBRAINS_SYNC_TEST_BUCKET and a login.
+"""Push to a real bucket. Needs EBRAINS_BUCKET_SYNC_TEST_BUCKET and a login.
 
-The login comes from the stored device-flow login, or from EBRAINS_SYNC_TOKEN.
+The login comes from the stored device-flow login, or from EBRAINS_BUCKET_SYNC_TOKEN.
 """
 
 import os
@@ -8,14 +8,19 @@ import uuid
 
 import pytest
 
-from ebrains_sync import DeviceFlowAuthenticator, EbrainsDriveStorage, SyncOptions, sync_to_bucket
-from ebrains_sync.remote import list_remote_files
+from ebrains_bucket_sync import (
+    DeviceFlowAuthenticator,
+    EbrainsDriveStorage,
+    SyncOptions,
+    sync_to_bucket,
+)
+from ebrains_bucket_sync.remote import list_remote_files
 
-BUCKET = os.environ.get("EBRAINS_SYNC_TEST_BUCKET")
+BUCKET = os.environ.get("EBRAINS_BUCKET_SYNC_TEST_BUCKET")
 
 pytestmark = [
     pytest.mark.live,
-    pytest.mark.skipif(not BUCKET, reason="EBRAINS_SYNC_TEST_BUCKET is not set"),
+    pytest.mark.skipif(not BUCKET, reason="EBRAINS_BUCKET_SYNC_TEST_BUCKET is not set"),
 ]
 
 
@@ -26,7 +31,7 @@ def storage():
 
 @pytest.fixture
 def prefix(storage):
-    prefix = f"ebrains-sync-test/{uuid.uuid4()}/"
+    prefix = f"ebrains-bucket-sync-test/{uuid.uuid4()}/"
     yield prefix
     for entry in list_remote_files(storage, BUCKET, prefix):
         storage.delete_object(BUCKET, prefix + entry.path)

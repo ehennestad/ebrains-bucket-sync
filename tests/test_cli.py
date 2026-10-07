@@ -5,7 +5,7 @@ import jsonschema
 import pytest
 from click.testing import CliRunner
 
-from ebrains_sync import cli
+from ebrains_bucket_sync import cli
 
 from .conftest import FakeStorage, write
 
