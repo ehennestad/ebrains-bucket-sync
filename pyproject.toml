@@ -17,7 +17,11 @@ classifiers = [
   "Topic :: System :: Archiving :: Mirroring",
 ]
 dependencies = [
-  "ebrains-drive>=0.7.0",
+  # storage.object_url_path passes ebrains_drive percent-encoded object names,
+  # which relies on ebrains_drive putting them into URLs as given. A release
+  # that encodes them itself (HumanBrainProject/ebrains-storage#60) would encode
+  # them twice, so newer versions need that encoding removed first.
+  "ebrains-drive>=0.7.0,<0.7.1",
   "requests>=2.28",
   "click>=8.1",
   "platformdirs>=3.0",
