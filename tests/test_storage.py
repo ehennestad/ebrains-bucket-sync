@@ -1,13 +1,15 @@
 """EbrainsDriveStorage against a stand-in for the ebrains_drive client."""
 
 import os
+import threading
 import time
 from types import SimpleNamespace
 
 import pytest
-from ebrains_drive.exceptions import ClientHttpError, Unauthorized
+from ebrains_drive.exceptions import ClientHttpError, TokenExpired, Unauthorized
 
 import ebrains_bucket_sync.storage as storage_module
+from ebrains_bucket_sync import SyncOptions, sync_to_bucket
 from ebrains_bucket_sync.storage import EbrainsDriveStorage, is_transient_error
 
 from .conftest import write
@@ -87,6 +89,48 @@ def test_renews_the_token_once_when_a_request_is_refused():
     assert len(objects) == 1
     assert tokens.calls == [False, True]
     assert FakeClient.instances[-1].token == "token-2"
+
+
+def test_token_is_renewed_once_when_parallel_uploads_are_refused(folder):
+    workers = 4
+    for k in range(workers):
+        write(folder, f"f{k}.txt", b"x")
+    # Every upload with the first token waits here until all workers hold
+    # one, so they are all refused together, as when a token expires.
+    refused_together = threading.Barrier(workers, timeout=5)
+    renewals = []
+    uploads = []
+
+    class Tokens:
+        def access_token(self, *, force_refresh=False):
+            if force_refresh:
+                renewals.append(threading.current_thread().name)
+            return f"token-{len(renewals)}"
+
+    class Bucket:
+        def __init__(self, token):
+            self.token = token
+
+        def ls(self, prefix=None):
+            return []
+
+        def upload(self, filelike, filename, **kwargs):
+            if self.token == "token-0":
+                refused_together.wait()
+                raise TokenExpired()
+            uploads.append((self.token, filename))
+
+    class Client:
+        def __init__(self, token):
+            self.buckets = SimpleNamespace(get_bucket=lambda name: Bucket(token))
+
+    storage = EbrainsDriveStorage(Tokens(), client_factory=Client)
+
+    results = sync_to_bucket(folder, "b", storage, SyncOptions(workers=workers))
+
+    assert len(renewals) == 1
+    assert {(r.path, r.status) for r in results} == {(f"f{k}.txt", "done") for k in range(workers)}
+    assert sorted(uploads) == [("token-1", f"f{k}.txt") for k in range(workers)]
 
 
 def test_other_errors_are_not_retried_with_a_new_token():
