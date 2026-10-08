@@ -212,6 +212,22 @@ def test_manifest_of_a_file_replaced_with_an_older_time_is_discarded(folder, mon
     assert not manifest.exists()
 
 
+@pytest.mark.skipif(
+    os.name == "nt" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+    reason="Needs a folder the user cannot write to, which Windows and root do not give.",
+)
+def test_large_file_in_a_read_only_folder_goes_as_a_handle(folder, monkeypatch):
+    large = write(folder, "large.bin", b"xyz")
+    folder.chmod(0o555)
+    try:
+        bucket = upload_large(folder, monkeypatch)
+    finally:
+        folder.chmod(0o755)
+
+    assert bucket.uploads[0][:2] == ("<handle>", "large.bin")
+    assert sorted(path.name for path in folder.iterdir()) == [large.name]
+
+
 def test_delete_uses_the_bucket_api_path():
     storage = EbrainsDriveStorage(RecordingTokens(), client_factory=FakeClient)
 

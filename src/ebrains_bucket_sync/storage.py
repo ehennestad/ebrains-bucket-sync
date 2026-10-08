@@ -8,6 +8,7 @@ library's interface stays contained here.
 from __future__ import annotations
 
 import os
+import tempfile
 import threading
 from collections.abc import Callable
 from pathlib import Path
@@ -82,6 +83,20 @@ def discard_stale_manifest(local_path: Path) -> None:
         manifest.unlink(missing_ok=True)
 
 
+def can_write_in(folder: Path) -> bool:
+    """Whether a file can be created in folder.
+
+    Found by creating one, since the permissions can say yes where writing
+    fails, such as on a network file system with its own access rules.
+    """
+    try:
+        with tempfile.TemporaryFile(dir=folder):
+            pass
+    except OSError:
+        return False
+    return True
+
+
 class EbrainsDriveStorage:
     """BucketStorage over the Data Proxy, through ebrains_drive.
 
@@ -135,9 +150,12 @@ class EbrainsDriveStorage:
         def operation(client: Any) -> None:
             target = self._bucket(client, bucket)
             # A large file goes by path: the library then keeps a manifest
-            # next to it, so an interrupted multipart upload can resume. A
-            # small one goes as a handle that is closed here.
-            if local_path.stat().st_size > EBRAINS_DRIVE_MULTIPART_THRESHOLD:
+            # next to it, so an interrupted multipart upload can resume. Other
+            # files go as a handle that is closed here, and the library keeps
+            # no manifest: a small file, and a large one in a folder that
+            # cannot be written to, where writing the manifest would fail.
+            is_large = local_path.stat().st_size > EBRAINS_DRIVE_MULTIPART_THRESHOLD
+            if is_large and can_write_in(local_path.parent):
                 discard_stale_manifest(local_path)
                 target.upload(str(local_path), object_name, timeout=self._timeout)
             else:
