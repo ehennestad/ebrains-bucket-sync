@@ -3,6 +3,7 @@
 import json
 import os
 import stat
+import webbrowser
 from collections import deque
 
 import pytest
@@ -14,6 +15,7 @@ from ebrains_bucket_sync.auth import (
     DeviceFlowAuthenticator,
     TokenSet,
     TokenStore,
+    _open_in_browser,
 )
 
 WELL_KNOWN = "https://iam.example/realms/hbp/.well-known/openid-configuration"
@@ -81,16 +83,19 @@ def authenticator(tmp_path, clock, monkeypatch):
     monkeypatch.delenv(ENV_TOKEN, raising=False)
     session = ScriptedSession()
     notices = []
+    opened = []
     auth = DeviceFlowAuthenticator(
         TokenStore(tmp_path / "tokens.json"),
         iam_base_url="https://iam.example/realms/hbp",
         session=session,
         notify=notices.append,
+        open_browser=opened.append,
         sleep=lambda seconds: None,
         now=lambda: clock["now"],
     )
     auth.session = session
     auth.notices = notices
+    auth.opened = opened
     return auth
 
 
@@ -120,6 +125,7 @@ def test_login_shows_the_link_polls_until_granted_and_stores_the_tokens(authenti
 
     assert token == "access-1"
     assert authenticator.notices == ["To log in to EBRAINS, open https://iam.example/verify?code=X"]
+    assert authenticator.opened == ["https://iam.example/verify?code=X"]
     device_post = session.posts[0][1]
     assert device_post["client_id"] == "ebrains-services-toolbox-matlab"
     assert "team" in device_post["scope"] and "offline_access" in device_post["scope"]
@@ -129,6 +135,38 @@ def test_login_shows_the_link_polls_until_granted_and_stores_the_tokens(authenti
     assert stored.access_token == "access-1" and stored.refresh_token == "refresh-1"
     assert stored.access_expires_at == clock["now"] + 300
     assert stat.S_IMODE(os.stat(authenticator.store.path).st_mode) == 0o600
+
+
+def test_login_opens_the_page_without_the_code_when_only_that_is_given(authenticator):
+    session = authenticator.session
+    session.queue(
+        DEVICE_URL,
+        Response(
+            200,
+            {
+                "device_code": "dc",
+                "verification_uri": "https://iam.example/device",
+                "user_code": "ABCD-EFGH",
+            },
+        ),
+    )
+    session.queue(TOKEN_URL, tokens_response())
+
+    authenticator.login()
+
+    assert authenticator.opened == ["https://iam.example/device"]
+    assert authenticator.notices == [
+        "To log in to EBRAINS, open https://iam.example/device and enter the code ABCD-EFGH"
+    ]
+
+
+def test_login_page_that_cannot_be_opened_is_ignored(monkeypatch):
+    def fail(url):
+        raise webbrowser.Error("no runnable browser")
+
+    monkeypatch.setattr(webbrowser, "open", fail)
+
+    _open_in_browser("https://iam.example/verify")
 
 
 def test_stored_token_is_reused_while_valid(authenticator, clock):
