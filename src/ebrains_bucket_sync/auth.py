@@ -16,7 +16,7 @@ import tempfile
 import time
 import webbrowser
 from collections.abc import Callable, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -223,7 +223,11 @@ class DeviceFlowAuthenticator:
             raise AuthError(f"The login was not completed: {_describe(response)}")
 
     def refresh(self, tokens: TokenSet) -> TokenSet:
-        """A new TokenSet from the refresh token."""
+        """A new TokenSet from the refresh token.
+
+        A reply without a new refresh token leaves the old one in use, as
+        RFC 6749, section 6, has it.
+        """
         response = self._session.post(
             self._get_endpoints()["token_endpoint"],
             data={
@@ -235,7 +239,14 @@ class DeviceFlowAuthenticator:
         )
         if response.status_code != 200:
             raise AuthError(f"Could not renew the login: {_describe(response)}")
-        return TokenSet.from_response(response.json(), self._now())
+        renewed = TokenSet.from_response(response.json(), self._now())
+        if not renewed.refresh_token:
+            renewed = replace(
+                renewed,
+                refresh_token=tokens.refresh_token,
+                refresh_expires_at=tokens.refresh_expires_at,
+            )
+        return renewed
 
     def logout(self) -> None:
         self._tokens = None
