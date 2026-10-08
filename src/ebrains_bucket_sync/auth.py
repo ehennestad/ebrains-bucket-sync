@@ -248,6 +248,14 @@ class DeviceFlowAuthenticator:
             )
         return renewed
 
+    def log_in_again(self) -> TokenSet:
+        """Run the device flow even when a valid login is stored.
+
+        The stored login is replaced only once the new one succeeds, so a
+        login that is refused, expires or is interrupted leaves it in place.
+        """
+        return self._remember(self.login())
+
     def logout(self) -> None:
         self._tokens = None
         self.store.clear()

@@ -281,6 +281,52 @@ def test_login_fails_when_the_user_denies(authenticator):
         authenticator.login()
 
 
+def queue_device_authorization(session):
+    session.queue(
+        DEVICE_URL, Response(200, {"device_code": "dc", "verification_uri_complete": "u"})
+    )
+
+
+def test_logging_in_again_replaces_the_stored_login(authenticator, clock):
+    authenticator.store.save(TokenSet("old", clock["now"] + 3600, "refresh-0"))
+    queue_device_authorization(authenticator.session)
+    authenticator.session.queue(TOKEN_URL, tokens_response(access="new"))
+
+    authenticator.log_in_again()
+
+    assert authenticator.store.load().access_token == "new"
+    assert authenticator.access_token() == "new"
+
+
+def interrupt(seconds):
+    raise KeyboardInterrupt
+
+
+@pytest.mark.parametrize(
+    "token_reply,sleep,error",
+    [
+        pytest.param(Response(400, {"error": "access_denied"}), None, AuthError, id="refused"),
+        pytest.param(None, interrupt, KeyboardInterrupt, id="interrupted"),
+    ],
+)
+def test_logging_in_again_keeps_the_stored_login_when_the_new_one_fails(
+    authenticator, clock, token_reply, sleep, error
+):
+    old = TokenSet("old", clock["now"] + 3600, "refresh-0")
+    authenticator.store.save(old)
+    queue_device_authorization(authenticator.session)
+    if token_reply is not None:
+        authenticator.session.queue(TOKEN_URL, token_reply)
+    if sleep is not None:
+        authenticator._sleep = sleep
+
+    with pytest.raises(error):
+        authenticator.log_in_again()
+
+    assert authenticator.store.load() == old
+    assert authenticator.access_token() == "old"
+
+
 def test_environment_token_wins(authenticator, monkeypatch):
     monkeypatch.setenv(ENV_TOKEN, "from-env")
 
