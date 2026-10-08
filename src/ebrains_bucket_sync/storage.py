@@ -7,6 +7,7 @@ library's interface stays contained here.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol, TypeVar
@@ -19,6 +20,10 @@ from ebrains_drive.utils import EBRAINS_DRIVE_MULTIPART_THRESHOLD
 from .model import RemoteObject
 
 _T = TypeVar("_T")
+
+MULTIPART_MANIFEST_SUFFIX = ".multipart_manifest.json"
+"""ebrains_drive keeps the progress of a multipart upload of a file in a
+file of this name next to it, and resumes from it."""
 
 
 class TokenSource(Protocol):
@@ -50,6 +55,30 @@ def is_transient_error(error: BaseException) -> bool:
         return True
     code = getattr(error, "code", None)
     return isinstance(error, ClientHttpError) and isinstance(code, int) and code >= 500
+
+
+def discard_stale_manifest(local_path: Path) -> None:
+    """Delete the multipart manifest of a file that changed after it was written.
+
+    ebrains_drive resumes an upload from the manifest without checking the
+    file, so a resume after a change would join the parts of the old file
+    to the rest of the new one. The manifest is rewritten after every part,
+    so a file changed after it was last written must be uploaded anew.
+
+    The change time (st_ctime) is used where it is the time of the last
+    change: every write or replacement of the file sets it, and copy tools
+    that keep the modification time of the original cannot set it back. On
+    Windows st_ctime is the creation time, so the modification time is used.
+    """
+    manifest = Path(f"{local_path}{MULTIPART_MANIFEST_SUFFIX}")
+    try:
+        manifest_written = manifest.stat().st_mtime_ns
+    except FileNotFoundError:
+        return
+    info = local_path.stat()
+    file_changed = info.st_mtime_ns if os.name == "nt" else info.st_ctime_ns
+    if file_changed > manifest_written:
+        manifest.unlink(missing_ok=True)
 
 
 class EbrainsDriveStorage:
@@ -103,6 +132,7 @@ class EbrainsDriveStorage:
             # next to it, so an interrupted multipart upload can resume. A
             # small one goes as a handle that is closed here.
             if local_path.stat().st_size > EBRAINS_DRIVE_MULTIPART_THRESHOLD:
+                discard_stale_manifest(local_path)
                 target.upload(str(local_path), object_name, timeout=self._timeout)
             else:
                 with open(local_path, "rb") as file:
