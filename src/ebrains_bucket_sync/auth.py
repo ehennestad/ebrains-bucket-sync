@@ -13,6 +13,7 @@ import json
 import os
 import sys
 import time
+import webbrowser
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -105,6 +106,13 @@ def _print_to_stderr(message: str) -> None:
     print(message, file=sys.stderr, flush=True)
 
 
+def _open_in_browser(url: str) -> None:
+    try:
+        webbrowser.open(url)
+    except webbrowser.Error:
+        pass  # the printed link still lets the user open the page
+
+
 class DeviceFlowAuthenticator:
     """A TokenSource that logs the user in with the device flow when needed.
 
@@ -113,6 +121,8 @@ class DeviceFlowAuthenticator:
         client_id, scopes, iam_base_url: The OIDC client and what it asks for.
         session: HTTP session with get and post, for tests.
         notify: Shows the login link to the user. Prints to stderr by default.
+        open_browser: Opens the login page. Uses the default web browser by
+            default; the printed link is the fallback where none opens.
         sleep, now: For tests.
         timeout: Seconds to wait for each request.
     """
@@ -126,6 +136,7 @@ class DeviceFlowAuthenticator:
         iam_base_url: str = IAM_BASE_URL,
         session: Any = None,
         notify: Callable[[str], None] = _print_to_stderr,
+        open_browser: Callable[[str], None] = _open_in_browser,
         sleep: Callable[[float], None] = time.sleep,
         now: Callable[[], float] = time.time,
         timeout: float = 30.0,
@@ -136,6 +147,7 @@ class DeviceFlowAuthenticator:
         self.iam_base_url = iam_base_url.rstrip("/") + "/"
         self._session = session or requests.Session()
         self._notify = notify
+        self._open_browser = open_browser
         self._sleep = sleep
         self._now = now
         self._timeout = timeout
@@ -163,7 +175,7 @@ class DeviceFlowAuthenticator:
         return self._remember(self.login()).access_token
 
     def login(self) -> TokenSet:
-        """Run the device flow: show the link, wait for the user, return the tokens."""
+        """Run the device flow: open the link, wait for the user, return the tokens."""
         endpoints = self._get_endpoints()
         response = self._session.post(
             endpoints["device_authorization_endpoint"],
@@ -178,6 +190,7 @@ class DeviceFlowAuthenticator:
             f"{device.get('verification_uri')} and enter the code {device.get('user_code')}"
         )
         self._notify(f"To log in to EBRAINS, open {link}")
+        self._open_browser(device.get("verification_uri_complete") or device["verification_uri"])
 
         interval = float(device.get("interval") or 5)
         deadline = self._now() + float(device.get("expires_in") or 600)
