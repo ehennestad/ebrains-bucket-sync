@@ -8,6 +8,7 @@ library's interface stays contained here.
 from __future__ import annotations
 
 import os
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol, TypeVar
@@ -86,7 +87,10 @@ class EbrainsDriveStorage:
 
     A request refused for its token is sent once more with a fresh token
     from the TokenSource, so a token that expires during a long sync is
-    renewed without the sync noticing.
+    renewed without the sync noticing. Requests may run on several threads.
+    When their token expires, they are all refused at about the same time,
+    and the token is renewed once: the other threads retry with the client
+    the first one made.
 
     Args:
         tokens: Where the access token comes from.
@@ -106,10 +110,12 @@ class EbrainsDriveStorage:
         self._client_factory = client_factory
         self._client: Any = None
         self._buckets: dict[str, Any] = {}
+        """Buckets of self._client, by name."""
+        self._lock = threading.Lock()
 
     def list_objects(self, bucket: str, prefix: str) -> list[RemoteObject]:
-        def operation(renew: bool) -> list[RemoteObject]:
-            listing = self._bucket(bucket, renew).ls(prefix=prefix or None)
+        def operation(client: Any) -> list[RemoteObject]:
+            listing = self._bucket(client, bucket).ls(prefix=prefix or None)
             return [
                 RemoteObject(
                     name=obj.name,
@@ -126,8 +132,8 @@ class EbrainsDriveStorage:
     def upload(self, bucket: str, object_name: str, local_path: Path) -> None:
         local_path = Path(local_path)
 
-        def operation(renew: bool) -> None:
-            target = self._bucket(bucket, renew)
+        def operation(client: Any) -> None:
+            target = self._bucket(client, bucket)
             # A large file goes by path: the library then keeps a manifest
             # next to it, so an interrupted multipart upload can resume. A
             # small one goes as a handle that is closed here.
@@ -141,30 +147,48 @@ class EbrainsDriveStorage:
         self._with_fresh_token_on_refusal(operation)
 
     def delete_object(self, bucket: str, object_name: str) -> None:
-        def operation(renew: bool) -> None:
-            self._client_for(renew).delete(
-                f"/v1/buckets/{bucket}/{object_name}", timeout=self._timeout
-            )
+        def operation(client: Any) -> None:
+            client.delete(f"/v1/buckets/{bucket}/{object_name}", timeout=self._timeout)
 
         self._with_fresh_token_on_refusal(operation)
 
-    def _client_for(self, renew: bool) -> Any:
-        if self._client is None or renew:
-            token = self._tokens.access_token(force_refresh=renew)
-            self._client = self._client_factory(token=token)
-            self._buckets.clear()
-        return self._client
+    def _current_client(self) -> Any:
+        with self._lock:
+            if self._client is None:
+                self._install_client(self._tokens.access_token())
+            return self._client
 
-    def _bucket(self, name: str, renew: bool) -> Any:
-        client = self._client_for(renew)
-        if name not in self._buckets:
-            self._buckets[name] = client.buckets.get_bucket(name)
-        return self._buckets[name]
+    def _renewed_client(self, refused: Any) -> Any:
+        """A client with a fresh token, in place of the client that was refused.
 
-    def _with_fresh_token_on_refusal(self, operation: Callable[[bool], _T]) -> _T:
+        Only the first thread refused with a client renews it. A thread that
+        gets the lock after that finds the client already replaced, and uses
+        the new one without asking for another token.
+        """
+        with self._lock:
+            if self._client is refused:
+                self._install_client(self._tokens.access_token(force_refresh=True))
+            return self._client
+
+    def _install_client(self, token: str) -> None:
+        self._client = self._client_factory(token=token)
+        self._buckets = {}
+
+    def _bucket(self, client: Any, name: str) -> Any:
+        with self._lock:
+            if client is self._client and name in self._buckets:
+                return self._buckets[name]
+        bucket = client.buckets.get_bucket(name)
+        with self._lock:
+            if client is self._client:
+                self._buckets[name] = bucket
+        return bucket
+
+    def _with_fresh_token_on_refusal(self, operation: Callable[[Any], _T]) -> _T:
+        client = self._current_client()
         try:
-            return operation(False)
+            return operation(client)
         except Exception as error:
             if not is_auth_error(error):
                 raise
-        return operation(True)
+        return operation(self._renewed_client(client))
