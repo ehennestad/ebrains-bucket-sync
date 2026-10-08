@@ -21,3 +21,14 @@ jobs:
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run pytest
+
+  # The one check the ruleset requires, so that adding a Python version to the
+  # matrix does not need a ruleset change. It must run even when a test job
+  # fails, because a required check that is skipped counts as passed.
+  tests-passed:
+    if: always()
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - if: needs.test.result != 'success'
+        run: exit 1
