@@ -190,6 +190,17 @@ def test_expiring_token_is_renewed_from_the_refresh_token(authenticator, clock):
     assert authenticator.store.load().refresh_token == "refresh-2"
 
 
+def test_renewal_without_a_new_refresh_token_keeps_the_old_one(authenticator, clock):
+    authenticator.store.save(TokenSet("old", clock["now"] + 30, "refresh-0", clock["now"] + 3600))
+    authenticator.session.queue(
+        TOKEN_URL, Response(200, {"access_token": "renewed", "expires_in": 300})
+    )
+
+    assert authenticator.access_token() == "renewed"
+    stored = authenticator.store.load()
+    assert (stored.refresh_token, stored.refresh_expires_at) == ("refresh-0", clock["now"] + 3600)
+
+
 def test_force_refresh_renews_a_valid_token(authenticator, clock):
     authenticator.store.save(TokenSet("old", clock["now"] + 3600, "refresh-0", None))
     authenticator.session.queue(TOKEN_URL, tokens_response(access="renewed"))
