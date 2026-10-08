@@ -236,6 +236,30 @@ def test_delete_uses_the_bucket_api_path():
     assert FakeClient.instances[0].deleted == ["/v1/buckets/b/sub/a.txt"]
 
 
+@pytest.mark.parametrize(
+    ("object_name", "url_path"),
+    [
+        ("sub/run#2.csv", "sub/run%232.csv"),
+        ("what?.txt", "what%3F.txt"),
+        ("50%25done.txt", "50%2525done.txt"),
+        ("a b+c.txt", "a%20b%2Bc.txt"),
+        ("ø.txt", "%C3%B8.txt"),
+    ],
+)
+def test_object_names_are_encoded_in_urls(folder, monkeypatch, object_name, url_path):
+    monkeypatch.setattr(storage_module, "EBRAINS_DRIVE_MULTIPART_THRESHOLD", 2)
+    small = write(folder, "small.bin", b"x")
+    large = write(folder, "large.bin", b"xyz")
+    storage = EbrainsDriveStorage(RecordingTokens(), client_factory=FakeClient)
+
+    storage.upload("b", object_name, small)
+    storage.upload("b", object_name, large)
+    storage.delete_object("b", object_name)
+
+    assert [name for _, name, _ in storage._buckets["b"].uploads] == [url_path, url_path]
+    assert FakeClient.instances[0].deleted == [f"/v1/buckets/b/{url_path}"]
+
+
 def test_transient_errors():
     assert is_transient_error(ConnectionError())
     assert is_transient_error(ClientHttpError(503, "busy"))

@@ -65,3 +65,26 @@ def test_push_round_trip(tmp_path, storage, prefix):
         ("sub/name with space.txt", "delete", "done"),
     }
     assert [f.path for f in list_remote_files(storage, BUCKET, prefix)] == ["a.txt"]
+
+
+def test_names_with_url_characters_round_trip(tmp_path, storage, prefix):
+    names = ["50%done.txt", "a b+c.txt", "x&y=z;.txt", "ø ü.txt"]
+    for name in names:
+        (tmp_path / name).write_bytes(name.encode())
+    options = SyncOptions(prefix=prefix, delete=True)
+
+    first = sync_to_bucket(tmp_path, BUCKET, storage, options)
+    assert {(r.path, r.status) for r in first} == {(name, "done") for name in names}
+    assert sorted(f.path for f in list_remote_files(storage, BUCKET, prefix)) == sorted(names)
+
+    second = sync_to_bucket(tmp_path, BUCKET, storage, options)
+    assert all(r.reason == "unchanged" for r in second)
+
+    for name in names:
+        (tmp_path / name).unlink()
+    (tmp_path / "keep.txt").write_bytes(b"keep")
+    third = sync_to_bucket(tmp_path, BUCKET, storage, options)
+    assert {(r.path, r.action, r.status) for r in third if r.action == "delete"} == {
+        (name, "delete", "done") for name in names
+    }
+    assert [f.path for f in list_remote_files(storage, BUCKET, prefix)] == ["keep.txt"]

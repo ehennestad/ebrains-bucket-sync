@@ -13,6 +13,7 @@ import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol, TypeVar
+from urllib.parse import quote
 
 import requests
 from ebrains_drive import BucketApiClient
@@ -97,6 +98,17 @@ def can_write_in(folder: Path) -> bool:
     return True
 
 
+def object_url_path(object_name: str) -> str:
+    """Object name for the path of a Data Proxy URL: percent-encoded, "/" kept.
+
+    The Data Proxy decodes the path, so an encoded name reaches it intact.
+    Unencoded, "#" ends the path and "?" starts a query string, so the
+    request names a different object, and "%" followed by two hex digits
+    is decoded into another character.
+    """
+    return quote(object_name, safe="/")
+
+
 class EbrainsDriveStorage:
     """BucketStorage over the Data Proxy, through ebrains_drive.
 
@@ -149,6 +161,8 @@ class EbrainsDriveStorage:
 
         def operation(client: Any) -> None:
             target = self._bucket(client, bucket)
+            # ebrains_drive puts the name into the request URL as it is given
+            url_path = object_url_path(object_name)
             # A large file goes by path: the library then keeps a manifest
             # next to it, so an interrupted multipart upload can resume. Other
             # files go as a handle that is closed here, and the library keeps
@@ -157,16 +171,18 @@ class EbrainsDriveStorage:
             is_large = local_path.stat().st_size > EBRAINS_DRIVE_MULTIPART_THRESHOLD
             if is_large and can_write_in(local_path.parent):
                 discard_stale_manifest(local_path)
-                target.upload(str(local_path), object_name, timeout=self._timeout)
+                target.upload(str(local_path), url_path, timeout=self._timeout)
             else:
                 with open(local_path, "rb") as file:
-                    target.upload(file, object_name, timeout=self._timeout)
+                    target.upload(file, url_path, timeout=self._timeout)
 
         self._with_fresh_token_on_refusal(operation)
 
     def delete_object(self, bucket: str, object_name: str) -> None:
         def operation(client: Any) -> None:
-            client.delete(f"/v1/buckets/{bucket}/{object_name}", timeout=self._timeout)
+            client.delete(
+                f"/v1/buckets/{bucket}/{object_url_path(object_name)}", timeout=self._timeout
+            )
 
         self._with_fresh_token_on_refusal(operation)
 
