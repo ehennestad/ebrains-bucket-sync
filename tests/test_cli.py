@@ -148,6 +148,9 @@ def test_login_and_logout_use_the_authenticator(runner, monkeypatch):
             calls.append("token")
             return "t"
 
+        def log_in_again(self):
+            calls.append("log in again")
+
         def logout(self):
             calls.append("logout")
 
@@ -156,7 +159,7 @@ def test_login_and_logout_use_the_authenticator(runner, monkeypatch):
     assert runner.invoke(cli.main, ["login"]).exit_code == 0
     assert runner.invoke(cli.main, ["login", "--force"]).exit_code == 0
     assert runner.invoke(cli.main, ["logout"]).exit_code == 0
-    assert calls == ["token", "logout", "token", "logout"]
+    assert calls == ["token", "log in again", "logout"]
 
 
 def test_format_size():

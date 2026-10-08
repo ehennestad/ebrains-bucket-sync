@@ -42,10 +42,11 @@ def main() -> None:
 def login(force: bool) -> None:
     """Log in to EBRAINS. A link opens the login in the browser."""
     authenticator = make_authenticator()
-    if force:
-        authenticator.logout()
     try:
-        authenticator.access_token()
+        if force:
+            authenticator.log_in_again()
+        else:
+            authenticator.access_token()
     except AuthError as error:
         raise click.ClickException(str(error)) from error
     click.echo("Logged in to EBRAINS.", err=True)
