@@ -1,5 +1,7 @@
 """EbrainsDriveStorage against a stand-in for the ebrains_drive client."""
 
+import os
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -117,6 +119,53 @@ def test_small_files_go_as_a_handle_and_large_files_by_path(folder, monkeypatch)
         ("<handle>", "small.bin", {"timeout": 7}),
         (str(large), "large.bin", {"timeout": 7}),
     ]
+
+
+def set_mtime(path, seconds_from_now):
+    moment = time.time_ns() + int(seconds_from_now * 1e9)
+    os.utime(path, ns=(moment, moment))
+
+
+def upload_large(folder, monkeypatch, name="large.bin"):
+    monkeypatch.setattr(storage_module, "EBRAINS_DRIVE_MULTIPART_THRESHOLD", 2)
+    storage = EbrainsDriveStorage(RecordingTokens(), client_factory=FakeClient)
+    storage.upload("b", name, folder / name)
+    return storage._buckets["b"]
+
+
+def test_manifest_of_an_unchanged_file_is_kept_for_the_resume(folder, monkeypatch):
+    large = write(folder, "large.bin", b"xyz")
+    manifest = write(folder, "large.bin.multipart_manifest.json", b"{}")
+    set_mtime(manifest, 60)  # written after the file last changed
+
+    bucket = upload_large(folder, monkeypatch)
+
+    assert manifest.exists()
+    assert bucket.uploads[0][0] == str(large)
+
+
+def test_manifest_of_a_file_changed_after_it_is_discarded(folder, monkeypatch):
+    write(folder, "large.bin", b"xyz")
+    manifest = write(folder, "large.bin.multipart_manifest.json", b"{}")
+    set_mtime(manifest, -60)  # the file changed after the last part was recorded
+
+    upload_large(folder, monkeypatch)
+
+    assert not manifest.exists()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows has no change time to detect this with.")
+def test_manifest_of_a_file_replaced_with_an_older_time_is_discarded(folder, monkeypatch):
+    manifest = write(folder, "large.bin.multipart_manifest.json", b"{}")
+    set_mtime(manifest, -60)
+    # A copy that keeps the time of its original, as cp -p does: the file
+    # looks older than the manifest, but its change time is now.
+    large = write(folder, "large.bin", b"abc")
+    set_mtime(large, -3600)
+
+    upload_large(folder, monkeypatch)
+
+    assert not manifest.exists()
 
 
 def test_delete_uses_the_bucket_api_path():
