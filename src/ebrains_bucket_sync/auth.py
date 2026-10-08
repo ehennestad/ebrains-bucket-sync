@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import tempfile
 import time
 import webbrowser
 from collections.abc import Callable, Sequence
@@ -85,21 +86,25 @@ class TokenStore:
 
     def save(self, tokens: TokenSet) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        temporary = self.path.with_name(self.path.name + ".tmp")
-        with open(temporary, "w", opener=_open_private) as file:
-            json.dump(asdict(tokens), file)
-        os.replace(temporary, self.path)
-        os.chmod(self.path, 0o600)
+        # mkstemp creates a new file that only the user can read, so the
+        # tokens are never written to a file that others can read
+        descriptor, temporary = tempfile.mkstemp(
+            dir=self.path.parent, prefix=self.path.name, suffix=".tmp"
+        )
+        try:
+            with os.fdopen(descriptor, "w") as file:
+                json.dump(asdict(tokens), file)
+            os.replace(temporary, self.path)
+        except BaseException:
+            # a failed write must not leave a copy of the tokens behind
+            Path(temporary).unlink(missing_ok=True)
+            raise
 
     def clear(self) -> None:
         try:
             self.path.unlink()
         except FileNotFoundError:
             pass
-
-
-def _open_private(path: str, flags: int) -> int:
-    return os.open(path, flags, 0o600)
 
 
 def _print_to_stderr(message: str) -> None:

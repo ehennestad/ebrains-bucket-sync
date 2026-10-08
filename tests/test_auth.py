@@ -284,6 +284,39 @@ def test_logout_forgets_the_stored_login(authenticator, clock):
     assert authenticator.store.load() is None
 
 
+def test_tokens_are_written_to_a_private_file_despite_a_readable_leftover(tmp_path, monkeypatch):
+    path = tmp_path / "tokens.json"
+    leftover = tmp_path / "tokens.json.tmp"
+    leftover.write_text("")
+    leftover.chmod(0o644)
+    written_modes = []
+    replace = os.replace
+
+    def record_mode(source, destination):
+        written_modes.append(stat.S_IMODE(os.stat(source).st_mode))
+        replace(source, destination)
+
+    monkeypatch.setattr(os, "replace", record_mode)
+
+    TokenStore(path).save(TokenSet("access", 2_000_000.0))
+
+    assert written_modes == [0o600]
+    assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+    assert TokenStore(path).load().access_token == "access"
+
+
+def test_failed_save_leaves_no_temporary_file(tmp_path, monkeypatch):
+    def fail(source, destination):
+        raise OSError("replace failed")
+
+    monkeypatch.setattr(os, "replace", fail)
+
+    with pytest.raises(OSError, match="replace failed"):
+        TokenStore(tmp_path / "tokens.json").save(TokenSet("access", 2_000_000.0))
+
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_corrupt_store_counts_as_no_login(tmp_path):
     path = tmp_path / "tokens.json"
     path.write_text("{not json")
