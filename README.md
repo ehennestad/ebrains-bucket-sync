@@ -2,12 +2,18 @@
 
 Sync a local folder to an EBRAINS Data Proxy bucket, the way rsync does: only new and changed files are uploaded, so a sync that is interrupted picks up where it stopped when run again.
 
-The sync rules are shared with the `ebrains.bucket.sync` functions of the [EBRAINS MATLAB toolbox](https://github.com/ehennestad/EBRAINS-MATLAB). Both follow the contract in [spec/README.md](spec/README.md) and pass the same fixtures in `spec/fixtures`, so a plan is the same whichever tool makes it.
+The sync rules are shared with the `ebrains.bucket.sync` functions of the [EBRAINS MATLAB toolbox](https://github.com/ehennestad/EBRAINS-MATLAB). Both follow the contract in [spec/README.md](https://github.com/ehennestad/ebrains-bucket-sync/blob/main/spec/README.md) and pass the same fixtures in `spec/fixtures`, so a plan is the same whichever tool makes it.
 
 ## Install
 
 ```bash
-uv tool install git+https://github.com/ehennestad/ebrains-bucket-sync
+uv tool install ebrains-bucket-sync
+```
+
+or with pipx:
+
+```bash
+pipx install ebrains-bucket-sync
 ```
 
 or, for development:
