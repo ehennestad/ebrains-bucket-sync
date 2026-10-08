@@ -7,23 +7,10 @@ The sync rules are shared with the `ebrains.bucket.sync` functions of the [EBRAI
 ## Install
 
 ```bash
-uv tool install ebrains-bucket-sync
-```
-
-or with pipx:
-
-```bash
 pipx install ebrains-bucket-sync
 ```
 
-or, for development:
-
-```bash
-git clone https://github.com/ehennestad/ebrains-bucket-sync
-cd ebrains-bucket-sync
-uv sync --dev
-uv run pytest
-```
+No pipx, or using the package from Python? See [Installing ebrains-bucket-sync](https://github.com/ehennestad/ebrains-bucket-sync/blob/main/docs/install.md).
 
 ## Use
 
@@ -71,5 +58,12 @@ for result in results:
 The login uses the OAuth device flow with the same OIDC client as the [MATLAB toolbox](https://github.com/ehennestad/EBRAINS-MATLAB), so both tools show up as one application in your EBRAINS account. The tokens are kept in the user's configuration folder, in a file only the user can read, and the access token is renewed from the refresh token without a new login for as long as the refresh token lasts. In CI, set `EBRAINS_BUCKET_SYNC_TOKEN` to an access token instead.
 
 ## Development
+
+```bash
+git clone https://github.com/ehennestad/ebrains-bucket-sync
+cd ebrains-bucket-sync
+uv sync --dev
+uv run pytest
+```
 
 The live tests in `tests/live` run against a real bucket and are skipped unless `EBRAINS_BUCKET_SYNC_TEST_BUCKET` names one. Everything else runs offline against an in-memory bucket.
