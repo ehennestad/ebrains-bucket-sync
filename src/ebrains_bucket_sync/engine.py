@@ -13,6 +13,7 @@ uploaded, the failure is recorded in the result, and nothing is deleted.
 from __future__ import annotations
 
 import os
+import re
 import time
 import warnings
 from collections.abc import Callable
@@ -34,6 +35,8 @@ ALWAYS_EXCLUDED = ("*.multipart_manifest.json",)
 is in progress. It is not data, so it is never uploaded."""
 
 _ACTION_NAMES = {"copy": "upload", "delete": "delete", "none": "none"}
+_SIGNED_QUERY = re.compile(r"\?[^\s'\"()]*?[\w-]*sig[\w-]*=[^\s'\"()]*", re.IGNORECASE)
+"""The query string of a URL with a signature parameter, such as X-Amz-Signature."""
 _T = TypeVar("_T")
 
 
@@ -162,7 +165,7 @@ def sync_to_bucket(
             )
         except Exception as error:
             result.status = "failed"
-            result.message = str(error) or type(error).__name__
+            result.message = _error_message(error)
             emit(
                 SyncEvent("upload_failed", result.path, result.bytes, index, total, result.message)
             )
@@ -192,7 +195,7 @@ def sync_to_bucket(
             storage.delete_object(bucket, prefix + result.path)
         except Exception as error:
             result.status = "failed"
-            result.message = str(error) or type(error).__name__
+            result.message = _error_message(error)
             emit(
                 SyncEvent("delete_failed", result.path, result.bytes, index, total, result.message)
             )
@@ -202,6 +205,17 @@ def sync_to_bucket(
 
     emit(SyncEvent("finished", results=tuple(results)))
     return results
+
+
+def _error_message(error: BaseException) -> str:
+    """What an error says, without the query strings of signed URLs.
+
+    An upload goes to a signed URL, which lets anyone who holds it write
+    the object until it expires, and the HTTP libraries quote the URL a
+    request failed on. The message is printed and written to plan files,
+    so the query string with the signature is left out.
+    """
+    return _SIGNED_QUERY.sub("", str(error)) or type(error).__name__
 
 
 def _with_attempts(

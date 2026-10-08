@@ -261,3 +261,39 @@ def test_options_are_validated():
     with pytest.raises(ValueError):
         SyncOptions(workers=0)
     assert SyncOptions().max_delete == math.inf
+
+
+@pytest.mark.parametrize(
+    ("error_text", "message"),
+    [
+        pytest.param(
+            "403 Client Error: Forbidden for url: https://rgw.example/b/x.txt?X-Amz-Algorithm="
+            "AWS4-HMAC-SHA256&X-Amz-Credential=KEY%2F20261008&X-Amz-Signature=abc123",
+            "403 Client Error: Forbidden for url: https://rgw.example/b/x.txt",
+            id="http-error",
+        ),
+        pytest.param(
+            "HTTPSConnectionPool(host='rgw.example', port=443): Max retries exceeded with url: "
+            "/b/x.txt?X-Amz-Expires=10&X-Amz-Signature=abc123 (Caused by ConnectTimeoutError())",
+            "HTTPSConnectionPool(host='rgw.example', port=443): Max retries exceeded with url: "
+            "/b/x.txt (Caused by ConnectTimeoutError())",
+            id="connection-error",
+        ),
+        pytest.param(
+            "[Errno 2] No such file or directory: 'what?signal.txt'",
+            "[Errno 2] No such file or directory: 'what?signal.txt'",
+            id="name-with-question-mark",
+        ),
+    ],
+)
+def test_failure_messages_leave_out_url_signatures(folder, storage, error_text, message):
+    write(folder, "bad.txt", b"b")
+    storage.errors["bad.txt"] = ConnectionError(error_text)
+    events = []
+
+    results = sync_to_bucket(
+        folder, "b", storage, on_event=events.append, attempts=1, sleep=lambda seconds: None
+    )
+
+    assert [r.message for r in results] == [message]
+    assert [e.message for e in events if e.kind == "upload_failed"] == [message]
