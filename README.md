@@ -6,43 +6,11 @@ The sync rules are shared with the `ebrains.bucket.sync` functions of the [EBRAI
 
 ## Install
 
-Install the command in an environment of its own, with [pipx](https://pipx.pypa.io):
-
 ```bash
 pipx install ebrains-bucket-sync
 ```
 
-or with [uv](https://docs.astral.sh/uv/):
-
-```bash
-uv tool install ebrains-bucket-sync
-```
-
-Both put the `ebrains-bucket-sync` command on the `PATH` and keep its dependencies apart from other Python packages. It needs `ebrains-drive` 0.7.0 exactly, which in a shared environment would replace any other version.
-
-Without pipx, install it with pip, then open a new terminal:
-
-```bash
-python3 -m pip install --user pipx
-python3 -m pipx ensurepath
-```
-
-To use the Python API from your own code, install the package into that project's virtual environment:
-
-```bash
-python -m pip install ebrains-bucket-sync
-```
-
-Outside a virtual environment, `pip install` can stop with an `externally-managed-environment` error, as it does with Homebrew's Python and the system Python of Debian and Ubuntu, or install the command into a folder that is not on the `PATH`.
-
-For development:
-
-```bash
-git clone https://github.com/ehennestad/ebrains-bucket-sync
-cd ebrains-bucket-sync
-uv sync --dev
-uv run pytest
-```
+No pipx, or using the package from Python? See [Installing ebrains-bucket-sync](https://github.com/ehennestad/ebrains-bucket-sync/blob/main/docs/install.md).
 
 ## Use
 
@@ -90,5 +58,12 @@ for result in results:
 The login uses the OAuth device flow with the same OIDC client as the [MATLAB toolbox](https://github.com/ehennestad/EBRAINS-MATLAB), so both tools show up as one application in your EBRAINS account. The tokens are kept in the user's configuration folder, in a file only the user can read, and the access token is renewed from the refresh token without a new login for as long as the refresh token lasts. In CI, set `EBRAINS_BUCKET_SYNC_TOKEN` to an access token instead.
 
 ## Development
+
+```bash
+git clone https://github.com/ehennestad/ebrains-bucket-sync
+cd ebrains-bucket-sync
+uv sync --dev
+uv run pytest
+```
 
 The live tests in `tests/live` run against a real bucket and are skipped unless `EBRAINS_BUCKET_SYNC_TEST_BUCKET` names one. Everything else runs offline against an in-memory bucket.
