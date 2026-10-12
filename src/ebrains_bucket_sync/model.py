@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 COMPARISONS = ("SizeAndTime", "Size", "Checksum")
 """How a file on both sides is judged changed. See plan.plan_sync."""
@@ -55,6 +56,12 @@ class RemoteObject:
     content_type: str | None = None
 
 
+DownloadProgress = Callable[[int, "int | None"], None]
+"""Called as a download goes, with the bytes received so far and the size of
+the object, or None where the size is not known. May raise to stop the
+download."""
+
+
 class BucketStorage(Protocol):
     """What the engine needs from a bucket. storage.EbrainsDriveStorage is the real one."""
 
@@ -66,7 +73,44 @@ class BucketStorage(Protocol):
         """Store a local file as an object, replacing one of that name."""
         ...
 
+    def download(
+        self,
+        bucket: str,
+        object_name: str,
+        local_path: Path,
+        *,
+        on_progress: DownloadProgress | None = None,
+    ) -> None:
+        """Fetch an object into a local file, which is created or replaced."""
+        ...
+
     def delete_object(self, bucket: str, object_name: str) -> None: ...
+
+
+@runtime_checkable
+class ListingProgressStorage(Protocol):
+    """A BucketStorage that can also say how a listing is going.
+
+    A listing of many objects takes minutes, so a window shows its progress
+    when the storage can count the objects and report the listing as it
+    goes. Whether a storage can is found with isinstance, which checks that
+    it has object_count.
+    """
+
+    def object_count(self, bucket: str) -> int:
+        """Number of objects of the whole bucket, as the bucket reports it."""
+        ...
+
+    def list_objects(
+        self, bucket: str, prefix: str, *, on_progress: Callable[[int], None] | None = None
+    ) -> list[RemoteObject]:
+        """Every object whose name starts with prefix.
+
+        on_progress is called with the number of objects listed so far, at
+        intervals during the listing and once at its end. It may raise to
+        stop the listing.
+        """
+        ...
 
 
 @dataclass(frozen=True)
