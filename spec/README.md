@@ -87,7 +87,7 @@ Before exclude patterns are applied, the path `.ebrains` and every path below it
 
 ### Syncing a virtual bucket
 
-When the local folder of a sync has a `bucket.json`, the sync stops before it changes anything unless the bucket and the prefix of the sync are those of the file (`OtherBucket`). A dry run reports this instead of stopping.
+When the local folder of a sync has a `bucket.json`, the sync is refused (`OtherBucket`) unless the bucket and the prefix of the sync are those of the file. A refused sync stops before it changes anything. A dry run, which changes nothing, still plans the sync and reports the refusal with the plan.
 
 A placeholder is a local file of 0 bytes whose manifest entry has more than 0 bytes. In a sync to the bucket, the plan row of a placeholder becomes action `none` with reason `placeholder`, whatever the plan gave: its object is neither replaced by the empty file nor deleted. Without a manifest no file is a placeholder.
 
