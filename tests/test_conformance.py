@@ -10,6 +10,13 @@ from ebrains_bucket_sync.exclude import ExcludeFileError, exclude_files, parse_e
 from ebrains_bucket_sync.model import FileEntry, PlanItem
 from ebrains_bucket_sync.plan import deletion_refusal, plan_sync
 from ebrains_bucket_sync.remote import parse_listing_time
+from ebrains_bucket_sync.virtual_bucket import (
+    file_states,
+    format_manifest,
+    manifest_after_push,
+    parse_manifest,
+    protect_placeholders,
+)
 
 FIXTURES = Path(__file__).resolve().parents[1] / "spec" / "fixtures"
 
@@ -66,3 +73,42 @@ def test_refusal_fixture(case):
     refusal = deletion_refusal(plan, case["n_source_files"], max_delete)
 
     assert (refusal.code if refusal else None) == case["expected_code"]
+
+
+def to_entries(items):
+    return None if items is None else [to_entry(item) for item in items]
+
+
+@pytest.mark.parametrize("case", load_cases("manifest"))
+def test_manifest_fixture(case):
+    entries = to_entries(case["entries"])
+
+    assert parse_manifest(case["text"]) == entries
+    assert format_manifest(entries) == case["text"]
+
+
+@pytest.mark.parametrize("case", load_cases("file-state"))
+def test_file_state_fixture(case):
+    states = file_states(to_entries(case["local"]), to_entries(case["manifest"]))
+
+    assert states == [(item["path"], item["state"]) for item in case["expected"]]
+
+
+@pytest.mark.parametrize("case", load_cases("placeholder"))
+def test_placeholder_fixture(case):
+    plan = protect_placeholders(
+        [PlanItem(**item) for item in case["plan"]],
+        to_entries(case["local"]),
+        to_entries(case["manifest"]),
+    )
+
+    assert plan == [PlanItem(**item) for item in case["expected"]]
+
+
+@pytest.mark.parametrize("case", load_cases("manifest-update"))
+def test_manifest_update_fixture(case):
+    manifest = manifest_after_push(
+        to_entries(case["listing"]), to_entries(case["uploaded"]), case["deleted"]
+    )
+
+    assert manifest == to_entries(case["expected"])
