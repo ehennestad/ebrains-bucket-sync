@@ -77,7 +77,9 @@ class PlanItem:
         path: Path relative to the synced folder.
         action: "copy", "delete" or "none".
         reason: For a path of the source: "new", "size", "newer", "checksum"
-            or "unchanged". For a path only the target has: "extraneous".
+            or "unchanged", or "placeholder" for the empty placeholder of an
+            object of a virtual bucket (see virtual_bucket.protect_placeholders).
+            For a path only the target has: "extraneous".
         bytes: Size of the source file, or of the target file for a path
             only the target has.
     """

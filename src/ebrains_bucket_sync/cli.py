@@ -16,6 +16,7 @@ from .model import COMPARISONS, ActionResult, BucketStorage, SyncOptions, SyncWa
 from .paths import normalize_prefix
 from .planfile import plan_to_dict, write_plan_file
 from .storage import EbrainsDriveStorage
+from .virtual_bucket import VirtualBucketError
 
 EXIT_INCOMPLETE = 1
 EXIT_REFUSED = 2
@@ -142,7 +143,7 @@ def push(
         results = printer.results
         exit_code = EXIT_REFUSED
         click.echo(f"Stopped before changing anything: {error.reason}", err=True)
-    except AuthError as error:
+    except (AuthError, VirtualBucketError) as error:
         raise click.ClickException(str(error)) from error
     else:
         if any(result.status == "failed" for result in results):
@@ -187,6 +188,7 @@ class ConsolePrinter:
         deletions = [r for r in event.results if r.action == "delete"]
         unchanged = sum(1 for r in event.results if r.reason == "unchanged")
         kept = sum(1 for r in event.results if r.reason == "extraneous" and r.action != "delete")
+        placeholders = sum(1 for r in event.results if r.reason == "placeholder")
 
         self._say(f'Syncing "{self._local_folder}" to {self._where}.')
         self._say(
@@ -197,6 +199,11 @@ class ConsolePrinter:
             self._say(
                 f"{kept} object(s) of the bucket are not in the folder and are kept. "
                 "Use --delete to delete them."
+            )
+        if placeholders:
+            self._say(
+                f"{placeholders} empty file(s) are placeholders of objects not yet downloaded "
+                "and are left alone."
             )
         if self._options.dry_run:
             for result in uploads + deletions:
