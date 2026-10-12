@@ -52,11 +52,50 @@ class FakeClient:
         self.ls_calls = 0
         self.refuse_first = False
         self.deleted = []
+        self.requests = []
         self.buckets = SimpleNamespace(get_bucket=lambda name: FakeBucket(self, name))
         FakeClient.instances.append(self)
 
     def delete(self, url, **kwargs):
         self.deleted.append(url)
+
+    def get(self, url, **kwargs):
+        self.requests.append((url, kwargs))
+        if url.endswith("/stat"):
+            return SimpleNamespace(json=lambda: {"objects_count": 42})
+        return SimpleNamespace(json=lambda: {"url": "https://store.example/signed?sig=1"})
+
+
+class FakeResponse:
+    """What a session answers a streamed download with."""
+
+    def __init__(self, content, length=True):
+        self.content = content
+        self.headers = {"Content-Length": str(len(content))} if length else {}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        pass
+
+    def raise_for_status(self):
+        pass
+
+    def iter_content(self, chunk_size):
+        for start in range(0, len(self.content), chunk_size):
+            yield self.content[start : start + chunk_size]
+
+
+class FakeSession:
+    def __init__(self, content, length=True):
+        self.content = content
+        self.length = length
+        self.calls = []
+
+    def get(self, url, **kwargs):
+        self.calls.append((url, kwargs))
+        return FakeResponse(self.content, self.length)
 
 
 @pytest.fixture(autouse=True)
@@ -265,3 +304,63 @@ def test_transient_errors():
     assert is_transient_error(ClientHttpError(503, "busy"))
     assert not is_transient_error(ClientHttpError(404, "gone"))
     assert not is_transient_error(ValueError())
+
+
+def test_listing_reports_progress_at_the_step_and_at_the_end(monkeypatch):
+    storage = EbrainsDriveStorage(RecordingTokens(), client_factory=FakeClient)
+    reported = []
+
+    storage.list_objects("b", "", on_progress=reported.append)
+    assert reported == [1]
+
+    monkeypatch.setattr(storage_module, "LISTING_PROGRESS_STEP", 1)
+    reported.clear()
+    storage.list_objects("b", "", on_progress=reported.append)
+    assert reported == [1, 1]
+
+
+def test_object_count_comes_from_the_stat_record():
+    storage = EbrainsDriveStorage(RecordingTokens(), client_factory=FakeClient, timeout=7)
+
+    assert storage.object_count("b") == 42
+    assert FakeClient.instances[0].requests == [("/v1/buckets/b/stat", {"timeout": 7})]
+
+
+def test_download_url_is_asked_for_without_a_redirect():
+    storage = EbrainsDriveStorage(RecordingTokens(), client_factory=FakeClient, timeout=7)
+
+    url = storage.get_download_url("b", "sub/run#2.csv")
+
+    assert url == "https://store.example/signed?sig=1"
+    assert FakeClient.instances[0].requests == [
+        ("/v1/buckets/b/sub/run%232.csv", {"params": {"redirect": "false"}, "timeout": 7})
+    ]
+
+
+def test_download_streams_the_object_into_the_file(folder, monkeypatch):
+    monkeypatch.setattr(storage_module, "DOWNLOAD_CHUNK_SIZE", 2)
+    session = FakeSession(b"abcde")
+    storage = EbrainsDriveStorage(
+        RecordingTokens(), client_factory=FakeClient, session=session, timeout=7
+    )
+    progress = []
+
+    storage.download(
+        "b", "a.dat", folder / "a.dat", on_progress=lambda *args: progress.append(args)
+    )
+
+    assert (folder / "a.dat").read_bytes() == b"abcde"
+    assert progress == [(2, 5), (4, 5), (5, 5)]
+    assert session.calls == [("https://store.example/signed?sig=1", {"stream": True, "timeout": 7})]
+
+
+def test_download_without_a_content_length_reports_no_total(folder):
+    session = FakeSession(b"abc", length=False)
+    storage = EbrainsDriveStorage(RecordingTokens(), client_factory=FakeClient, session=session)
+    progress = []
+
+    storage.download(
+        "b", "a.dat", folder / "a.dat", on_progress=lambda *args: progress.append(args)
+    )
+
+    assert progress == [(3, None)]

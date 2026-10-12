@@ -9,6 +9,10 @@ toolbox does:
 An upload that fails does not stop the sync: the other files are
 uploaded, the failure is recorded in the result, and nothing is deleted.
 
+download_object fetches one object into a local file the way a sync from
+the bucket does, which the virtual bucket browser uses to fill a
+placeholder.
+
 When the local folder is a virtual bucket (see virtual_bucket.read_bucket_info),
 the sync must be of its bucket and prefix, its placeholders are left alone,
 and its manifest is updated from the listing the sync made. The .ebrains
@@ -19,6 +23,7 @@ from __future__ import annotations
 
 import os
 import re
+import tempfile
 import time
 import warnings
 from collections.abc import Callable
@@ -30,7 +35,14 @@ from typing import TypeVar
 
 from .exclude import exclude_files
 from .local import compute_md5, list_local_files
-from .model import ActionResult, BucketStorage, FileEntry, SyncOptions, SyncWarning
+from .model import (
+    ActionResult,
+    BucketStorage,
+    DownloadProgress,
+    FileEntry,
+    SyncOptions,
+    SyncWarning,
+)
 from .paths import normalize_prefix
 from .plan import Refusal, deletion_refusal, plan_sync
 from .remote import list_remote_files
@@ -51,6 +63,9 @@ ALWAYS_EXCLUDED = ("*.multipart_manifest.json",)
 """The manifest ebrains_drive keeps next to a file while a multipart upload
 is in progress. It is not data, so it is never uploaded."""
 
+DOWNLOAD_PART_SUFFIX = ".sync-part"
+"""Suffix of the temporary file an object is received in, next to its target."""
+
 _ACTION_NAMES = {"copy": "upload", "delete": "delete", "none": "none"}
 _SIGNED_QUERY = re.compile(r"\?[^\s'\"()]*?[\w-]*sig[\w-]*=[^\s'\"()]*", re.IGNORECASE)
 """The query string of a URL with a signature parameter, such as X-Amz-Signature."""
@@ -64,6 +79,10 @@ class SyncRefused(Exception):
         super().__init__(reason)
         self.code = code
         self.reason = reason
+
+
+class SizeMismatchError(Exception):
+    """A downloaded object has another size than the listing gave it."""
 
 
 @dataclass(frozen=True)
@@ -241,6 +260,56 @@ def sync_to_bucket(
 
     emit(SyncEvent("finished", results=tuple(results)))
     return results
+
+
+def download_object(
+    storage: BucketStorage,
+    bucket: str,
+    object_name: str,
+    target: str | os.PathLike[str],
+    *,
+    expected_bytes: int | None = None,
+    modified_time: datetime | None = None,
+    on_progress: DownloadProgress | None = None,
+) -> None:
+    """Download an object into target, replacing it only once the download is complete.
+
+    The object is received in a temporary file next to the target, so
+    that the replacement is a rename on the same file system and a failed
+    download leaves the target as it was: the empty placeholder of a
+    virtual bucket, or an older copy. The folder of the target is created
+    if needed.
+
+    expected_bytes is the size the listing reports for the object. A
+    download of another size raises SizeMismatchError and leaves the
+    target untouched, since the object was replaced between the listing
+    and the download. modified_time is the time of the object, which the
+    file is given: a file with the time of its object is unchanged to the
+    time comparison of a later sync in either direction, where one with
+    the time of the download would be newer than its object and be
+    uploaded again. on_progress is passed to the storage.
+    """
+    target = Path(target)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    handle, name = tempfile.mkstemp(
+        dir=target.parent, prefix=target.name + ".", suffix=DOWNLOAD_PART_SUFFIX
+    )
+    os.close(handle)
+    temporary = Path(name)
+    try:
+        storage.download(bucket, object_name, temporary, on_progress=on_progress)
+        size = temporary.stat().st_size
+        if expected_bytes is not None and size != expected_bytes:
+            raise SizeMismatchError(
+                f"The downloaded file {object_name!r} has {size} bytes, "
+                f"where the object has {expected_bytes}."
+            )
+        if modified_time is not None:
+            seconds = modified_time.timestamp()
+            os.utime(temporary, (seconds, seconds))
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _without_metadata(files: list[FileEntry]) -> list[FileEntry]:
