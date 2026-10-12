@@ -89,7 +89,7 @@ Before exclude patterns are applied, the path `.ebrains` and every path below it
 
 When the local folder of a sync has a `bucket.json`, the sync is refused (`OtherBucket`) unless the bucket and the prefix of the sync are those of the file. A refused sync stops before it changes anything. A dry run, which changes nothing, still plans the sync and reports the refusal with the plan.
 
-A placeholder is a local file of 0 bytes whose manifest entry has more than 0 bytes. In a sync to the bucket, the plan row of a placeholder becomes action `none` with reason `placeholder`, whatever the plan gave: its object is neither replaced by the empty file nor deleted. Without a manifest no file is a placeholder.
+A placeholder is a local file of 0 bytes whose object has more than 0 bytes in the listing the sync made, or had in the manifest. In a sync to the bucket, the plan row of a placeholder becomes action `none` with reason `placeholder`, whatever the plan gave: its object is neither replaced by the empty file, nor recreated as an empty object where it was removed since the manifest was made. A virtual bucket that was never listed has no manifest, and the listing alone decides.
 
 After a sync the manifest is the listing the sync made, before exclude patterns, and `listed_at` is the time of that listing. A sync to the bucket then adds the entry of each file it uploaded, with the local `bytes` and `hash` and an unknown `modified_time`, and removes the entry of each object it deleted. A failed transfer leaves the entry as the listing gave it.
 
@@ -118,7 +118,7 @@ The state of each path of a virtual bucket, sorted by path:
 
 `fixtures/file-state/*.json`: `local` entries, `manifest` entries (null for no manifest), and the `expected` rows of `path` and `state`.
 
-`fixtures/placeholder/*.json`: a `plan` of a sync to the bucket, the `local` entries and the `manifest` entries, and the `expected` plan.
+`fixtures/placeholder/*.json`: a `plan` of a sync to the bucket, the `local` entries, the `listing` the sync made and the `manifest` entries (null for no manifest), and the `expected` plan.
 
 `fixtures/manifest-update/*.json`: the `listing` of a sync to the bucket, the entries of the files it `uploaded` and the paths it `deleted`, and the `expected` manifest entries.
 

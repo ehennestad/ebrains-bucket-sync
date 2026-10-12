@@ -99,6 +99,7 @@ def test_placeholder_fixture(case):
     plan = protect_placeholders(
         [PlanItem(**item) for item in case["plan"]],
         to_entries(case["local"]),
+        to_entries(case["listing"]),
         to_entries(case["manifest"]),
     )
 

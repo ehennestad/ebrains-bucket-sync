@@ -1,5 +1,5 @@
 {
-  "description": "A placeholder is not uploaded, whether its object changed size or was removed since the listing. An edited file and an object that was empty at the listing are planned as the plan gives them.",
+  "description": "A placeholder is not uploaded, whether its object changed size or was removed since the manifest was made. An edited file and an object that was empty at the listing are planned as the plan gives them.",
   "plan": [
     {
       "path": "edited.dat",
@@ -52,6 +52,28 @@
       "path": "removed.dat",
       "bytes": 0,
       "modified_time": "2024-01-03T00:00:00Z"
+    }
+  ],
+  "listing": [
+    {
+      "path": "edited.dat",
+      "bytes": 3,
+      "modified_time": "2024-01-02T00:00:00Z"
+    },
+    {
+      "path": "empty.dat",
+      "bytes": 0,
+      "modified_time": "2024-01-02T00:00:00Z"
+    },
+    {
+      "path": "gone.dat",
+      "bytes": 3,
+      "modified_time": "2024-01-02T00:00:00Z"
+    },
+    {
+      "path": "placeholder.dat",
+      "bytes": 4,
+      "modified_time": "2024-01-02T00:00:00Z"
     }
   ],
   "manifest": [

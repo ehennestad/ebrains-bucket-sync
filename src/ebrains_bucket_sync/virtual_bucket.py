@@ -146,9 +146,15 @@ def format_manifest(entries: Iterable[FileEntry]) -> str:
     return output.getvalue()
 
 
-def is_placeholder(local: FileEntry, manifest_entry: FileEntry | None) -> bool:
-    """Whether a local file is the empty placeholder of an object that is not."""
-    return local.bytes == 0 and manifest_entry is not None and manifest_entry.bytes > 0
+def is_placeholder(local: FileEntry, *object_entries: FileEntry | None) -> bool:
+    """Whether a local file is the empty placeholder of an object that is not.
+
+    object_entries are what is known of the object: its entry in the
+    listing the sync made and in the manifest, each None where absent.
+    """
+    return local.bytes == 0 and any(
+        entry is not None and entry.bytes > 0 for entry in object_entries
+    )
 
 
 def file_states(
@@ -188,22 +194,28 @@ def file_states(
 
 
 def protect_placeholders(
-    plan: Iterable[PlanItem], local: Iterable[FileEntry], manifest: Iterable[FileEntry] | None
+    plan: Iterable[PlanItem],
+    local: Iterable[FileEntry],
+    listing: Iterable[FileEntry],
+    manifest: Iterable[FileEntry] | None,
 ) -> list[PlanItem]:
     """The plan of a sync to the bucket, with no action for placeholders.
 
-    An empty placeholder would otherwise replace its object, or be planned
-    as new where the object was removed since the listing.
+    An empty placeholder would otherwise replace its object, or be
+    recreated as an empty object where the object was removed since the
+    manifest was made. The listing the sync made says which objects are
+    not empty now, the manifest which were not empty when the placeholders
+    were made; without a manifest the listing alone decides.
     """
-    if manifest is None:
-        return list(plan)
-
     local_by_path = {entry.path: entry for entry in local}
-    manifest_by_path = {entry.path: entry for entry in manifest}
+    listing_by_path = {entry.path: entry for entry in listing}
+    manifest_by_path = {entry.path: entry for entry in manifest or ()}
     protected = []
     for item in plan:
         local_entry = local_by_path.get(item.path)
-        if local_entry is not None and is_placeholder(local_entry, manifest_by_path.get(item.path)):
+        if local_entry is not None and is_placeholder(
+            local_entry, listing_by_path.get(item.path), manifest_by_path.get(item.path)
+        ):
             item = replace(item, action="none", reason="placeholder")
         protected.append(item)
     return protected
