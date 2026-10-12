@@ -1,11 +1,11 @@
 {
-  "description": "Without a manifest an empty file cannot be told from an emptied one, so the plan is kept.",
+  "description": "Without a manifest, an empty local file whose object is not empty in the listing is a placeholder. An object the listing does not have is not protected, since no manifest says it existed.",
   "plan": [
     {
-      "path": "edited.dat",
+      "path": "a.dat",
       "action": "copy",
       "reason": "size",
-      "bytes": 4
+      "bytes": 0
     },
     {
       "path": "empty.dat",
@@ -14,13 +14,7 @@
       "bytes": 0
     },
     {
-      "path": "gone.dat",
-      "action": "delete",
-      "reason": "extraneous",
-      "bytes": 3
-    },
-    {
-      "path": "placeholder.dat",
+      "path": "grew.dat",
       "action": "copy",
       "reason": "size",
       "bytes": 0
@@ -34,8 +28,8 @@
   ],
   "local": [
     {
-      "path": "edited.dat",
-      "bytes": 4,
+      "path": "a.dat",
+      "bytes": 0,
       "modified_time": "2024-01-03T00:00:00Z"
     },
     {
@@ -44,7 +38,7 @@
       "modified_time": "2024-01-03T00:00:00Z"
     },
     {
-      "path": "placeholder.dat",
+      "path": "grew.dat",
       "bytes": 0,
       "modified_time": "2024-01-03T00:00:00Z"
     },
@@ -54,13 +48,30 @@
       "modified_time": "2024-01-03T00:00:00Z"
     }
   ],
+  "listing": [
+    {
+      "path": "a.dat",
+      "bytes": 3,
+      "modified_time": "2024-01-02T00:00:00Z"
+    },
+    {
+      "path": "empty.dat",
+      "bytes": 0,
+      "modified_time": "2024-01-02T00:00:00Z"
+    },
+    {
+      "path": "grew.dat",
+      "bytes": 5,
+      "modified_time": "2024-01-02T00:00:00Z"
+    }
+  ],
   "manifest": null,
   "expected": [
     {
-      "path": "edited.dat",
-      "action": "copy",
-      "reason": "size",
-      "bytes": 4
+      "path": "a.dat",
+      "action": "none",
+      "reason": "placeholder",
+      "bytes": 0
     },
     {
       "path": "empty.dat",
@@ -69,15 +80,9 @@
       "bytes": 0
     },
     {
-      "path": "gone.dat",
-      "action": "delete",
-      "reason": "extraneous",
-      "bytes": 3
-    },
-    {
-      "path": "placeholder.dat",
-      "action": "copy",
-      "reason": "size",
+      "path": "grew.dat",
+      "action": "none",
+      "reason": "placeholder",
       "bytes": 0
     },
     {
