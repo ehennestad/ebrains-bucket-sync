@@ -14,6 +14,7 @@ from ebrains_bucket_sync.browser import (
     ENV_PAGE,
     Host,
     VirtualBucket,
+    bucket_web_url,
     default_page_path,
     format_duration,
     format_local_time,
@@ -108,13 +109,16 @@ def make_virtual_bucket(folder, bucket="b", prefix="", manifest=None):
         write_manifest(folder, manifest)
 
 
-def make_host(folder, storage, *, run_command=None, update_on_ready=False, **open_args):
+def make_host(
+    folder, storage, *, run_command=None, open_url=None, update_on_ready=False, **open_args
+):
     page = StubPage()
     host = Host(
         VirtualBucket.open(folder, **open_args),
         storage,
         page,
         run_command=run_command,
+        open_url=open_url,
         update_on_ready=update_on_ready,
     )
     page.host = host
@@ -667,6 +671,31 @@ def test_reveal_runs_the_command_of_the_system_and_reports_a_failure(folder, sto
     assert commands == [["xdg-open", str(root / "sub")], ["xdg-open", str(root / "sub")]]
     assert page.alerts == [("The command failed", "error")] * 2
     assert page.named("alert")[0]["message"] == "no file manager"
+
+
+def test_open_online_opens_the_collaboratory_page_of_the_bucket(folder, storage):
+    make_virtual_bucket(folder, "d-3e860b3e-967c-425d-aa68-120451c5fe4b", "results")
+    opened = []
+    host, page = make_host(folder, storage, open_url=opened.append)
+
+    request(host, "openOnline")
+
+    assert opened == [
+        "https://wiki.ebrains.eu/bin/view/Collabs/d-3e860b3e-967c-425d-aa68-120451c5fe4b/Bucket"
+    ]
+    assert page.alerts == []
+
+
+def test_bucket_web_url_is_the_same_for_collab_and_dataset_buckets():
+    assert bucket_web_url("eivihe-sandbox") == (
+        "https://wiki.ebrains.eu/bin/view/Collabs/eivihe-sandbox/Bucket"
+    )
+    assert bucket_web_url("d-3e860b3e-967c-425d-aa68-120451c5fe4b") == (
+        "https://wiki.ebrains.eu/bin/view/Collabs/d-3e860b3e-967c-425d-aa68-120451c5fe4b/Bucket"
+    )
+    assert bucket_web_url("odd name/x") == (
+        "https://wiki.ebrains.eu/bin/view/Collabs/odd%20name%2Fx/Bucket"
+    )
 
 
 def test_unexpected_error_is_reported(folder, storage):
