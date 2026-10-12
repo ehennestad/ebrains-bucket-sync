@@ -27,11 +27,13 @@ import subprocess
 import sys
 import threading
 import time
+import webbrowser
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
+from urllib.parse import quote
 
 from platformdirs import user_cache_dir
 
@@ -62,6 +64,10 @@ to the file system, not to the bucket, so the browser leaves it out."""
 PROGRESS_INTERVAL = 0.25
 """Seconds between two progress events of a download. Each event is a
 round trip to the page, so one per chunk would slow a download down."""
+
+COLLABORATORY_BUCKET_URL = "https://wiki.ebrains.eu/bin/view/Collabs/{bucket}/Bucket"
+"""The page of a bucket in the Collaboratory. A dataset bucket, named
+d-<uuid>, has one under that name as well as a collab bucket does."""
 
 ENV_PAGE = "EBRAINS_BUCKET_SYNC_BROWSER_PAGE"
 """Path of the page to show, in place of the one of the toolbox checkout."""
@@ -256,6 +262,7 @@ class Host:
         page: Where the events go.
         run_command: Runs a command of the operating system, as
             subprocess.run with a list does. For tests.
+        open_url: Opens a web page, as webbrowser.open does. For tests.
         update_on_ready: List the bucket as soon as the page is ready, for
             a folder that was just created and has no files yet.
     """
@@ -267,12 +274,14 @@ class Host:
         page: Page,
         *,
         run_command: Callable[[list[str]], subprocess.CompletedProcess] | None = None,
+        open_url: Callable[[str], object] | None = None,
         update_on_ready: bool = False,
     ) -> None:
         self.bucket = virtual_bucket
         self._storage = storage
         self._page = page
         self._run_command = run_command or _run_command
+        self._open_url = open_url or webbrowser.open
         self._update_on_ready = update_on_ready
         self._message = ""
         self._page_ready = False
@@ -330,6 +339,8 @@ class Host:
             self._open(paths[0])
         elif name == "reveal":
             self._reveal(paths[0])
+        elif name == "openOnline":
+            self._open_url(bucket_web_url(self.bucket.info.bucket))
         # The page sends no other requests
 
     def close(self) -> None:
@@ -729,6 +740,11 @@ def format_duration(seconds: float) -> str:
 
 
 # ---------------------------------------------------------------- System
+
+
+def bucket_web_url(bucket: str) -> str:
+    """The address of the page of the bucket in the Collaboratory."""
+    return COLLABORATORY_BUCKET_URL.format(bucket=quote(bucket, safe=""))
 
 
 def reveal_action_name() -> str:
