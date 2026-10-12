@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ehennestad/ebrains-bucket-sync/spec/virtual-bucket.schema.json",
+  "title": "Virtual bucket",
+  "description": "The .ebrains/bucket.json file of a virtual bucket: which bucket the folder stands for, and when it was last listed.",
+  "type": "object",
+  "properties": {
+    "format_version": {
+      "description": "Version of the layout of the .ebrains folder.",
+      "const": 1
+    },
+    "bucket": {
+      "description": "Name of the bucket.",
+      "type": "string",
+      "minLength": 1
+    },
+    "prefix": {
+      "description": "Folder of the bucket that the virtual bucket stands for: \"\" for the whole bucket, or a folder name with a trailing \"/\" and no leading \"/\".",
+      "type": "string",
+      "pattern": "^$|^[^/].*/$"
+    },
+    "listed_at": {
+      "description": "When the manifest was last made from a listing, in UTC, or null if it never was.",
+      "type": ["string", "null"],
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+    }
+  },
+  "required": ["format_version", "bucket", "prefix", "listed_at"],
+  "additionalProperties": true
+}
