@@ -6,7 +6,7 @@ import pytest
 from click.testing import CliRunner
 
 from ebrains_bucket_sync import cli
-from ebrains_bucket_sync.virtual_bucket import BucketInfo, write_bucket_info
+from ebrains_bucket_sync.virtual_bucket import BucketInfo, read_bucket_info, write_bucket_info
 
 from .conftest import FakeStorage, write
 
@@ -231,3 +231,98 @@ def test_format_size():
     assert cli.format_size(1023) == "1023 B"
     assert cli.format_size(1536) == "1.5 KB"
     assert cli.format_size(3 * 1024**3) == "3.0 GB"
+
+
+@pytest.fixture
+def shown(monkeypatch):
+    """Replaces the window with a record of what would be shown."""
+    calls = []
+    monkeypatch.setattr(
+        cli, "show_browser", lambda *args, **kwargs: calls.append((args, kwargs)) or None
+    )
+    return calls
+
+
+@pytest.fixture
+def page(tmp_path):
+    page = tmp_path / "page.html"
+    page.write_text("<html></html>")
+    return page
+
+
+def test_browse_makes_a_new_folder_a_virtual_bucket_and_shows_it(
+    runner, tmp_path, fake_storage, shown, page
+):
+    folder = tmp_path / "new"
+
+    result = runner.invoke(
+        cli.main,
+        ["browse", str(folder), "--bucket", "b", "--prefix", "results", "--page", str(page)],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert read_bucket_info(folder) == BucketInfo("b", "results/", None)
+    (virtual_bucket, storage, shown_page), options = shown[0]
+    assert virtual_bucket.folder == folder.resolve()
+    assert storage is fake_storage
+    assert shown_page == page
+    assert options == {"update_on_ready": True}
+
+
+def test_browse_of_a_virtual_bucket_needs_no_bucket(runner, folder, fake_storage, shown, page):
+    write_bucket_info(folder, BucketInfo("b", "results"))
+
+    result = runner.invoke(cli.main, ["browse", str(folder), "--page", str(page)])
+
+    assert result.exit_code == 0, result.output
+    (virtual_bucket, _, _), options = shown[0]
+    assert virtual_bucket.info == BucketInfo("b", "results/", None)
+    assert options == {"update_on_ready": False}
+
+
+def test_browse_of_a_plain_folder_needs_a_bucket(runner, folder, fake_storage, shown, page):
+    result = runner.invoke(cli.main, ["browse", str(folder), "--page", str(page)])
+
+    assert result.exit_code == 1
+    assert "is not a virtual bucket. Give the bucket to make it one." in result.output
+    assert shown == [] and not (folder / ".ebrains").exists()
+
+
+def test_browse_of_another_bucket_is_an_error(runner, folder, fake_storage, shown, page):
+    write_bucket_info(folder, BucketInfo("b"))
+
+    result = runner.invoke(
+        cli.main, ["browse", str(folder), "--bucket", "other", "--page", str(page)]
+    )
+
+    assert result.exit_code == 1
+    assert "The folder is a virtual bucket of bucket 'b', not of bucket 'other'." in result.output
+    assert shown == []
+
+
+def test_browse_takes_the_page_from_the_environment(runner, folder, fake_storage, shown, page):
+    write_bucket_info(folder, BucketInfo("b"))
+
+    result = runner.invoke(
+        cli.main, ["browse", str(folder)], env={"EBRAINS_BUCKET_SYNC_BROWSER_PAGE": str(page)}
+    )
+
+    assert result.exit_code == 0, result.output
+    assert shown[0][0][2] == page
+
+
+def test_browse_without_a_page_to_show_is_an_error(
+    runner, folder, fake_storage, shown, monkeypatch
+):
+    write_bucket_info(folder, BucketInfo("b"))
+
+    def no_page():
+        raise FileNotFoundError("The browser page was not found. Give --page.")
+
+    monkeypatch.setattr(cli, "default_page_path", no_page)
+
+    result = runner.invoke(cli.main, ["browse", str(folder)])
+
+    assert result.exit_code == 1
+    assert "Error: The browser page was not found. Give --page." in result.output
+    assert shown == []

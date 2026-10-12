@@ -20,13 +20,21 @@ from ebrains_drive import BucketApiClient
 from ebrains_drive.exceptions import ClientHttpError, TokenExpired, Unauthorized
 from ebrains_drive.utils import EBRAINS_DRIVE_MULTIPART_THRESHOLD
 
-from .model import RemoteObject
+from .model import DownloadProgress, RemoteObject
 
 _T = TypeVar("_T")
 
 MULTIPART_MANIFEST_SUFFIX = ".multipart_manifest.json"
 """ebrains_drive keeps the progress of a multipart upload of a file in a
 file of this name next to it, and resumes from it."""
+
+LISTING_PROGRESS_STEP = 1000
+"""Objects between two progress reports of a listing. The time of a listing
+grows with the objects it returns (about 30 ms each, as measured on the
+Data Proxy), so this reports about every half minute."""
+
+DOWNLOAD_CHUNK_SIZE = 1024 * 1024
+"""Bytes read from a download at a time, and between two progress reports."""
 
 
 class TokenSource(Protocol):
@@ -123,6 +131,8 @@ class EbrainsDriveStorage:
         tokens: Where the access token comes from.
         timeout: Seconds to wait for each request.
         client_factory: Makes the ebrains_drive client, for tests.
+        session: HTTP session that fetches the objects from their download
+            URLs, which need no token. For tests.
     """
 
     def __init__(
@@ -131,30 +141,102 @@ class EbrainsDriveStorage:
         *,
         timeout: float = 120.0,
         client_factory: Callable[..., Any] = BucketApiClient,
+        session: Any = None,
     ) -> None:
         self._tokens = tokens
         self._timeout = timeout
         self._client_factory = client_factory
+        self._session = session or requests.Session()
         self._client: Any = None
         self._buckets: dict[str, Any] = {}
         """Buckets of self._client, by name."""
         self._lock = threading.Lock()
 
-    def list_objects(self, bucket: str, prefix: str) -> list[RemoteObject]:
+    def list_objects(
+        self, bucket: str, prefix: str, *, on_progress: Callable[[int], None] | None = None
+    ) -> list[RemoteObject]:
+        """Every object whose name starts with prefix.
+
+        on_progress, if given, is called with the number of objects listed
+        so far every LISTING_PROGRESS_STEP objects and once at the end, as
+        model.ListingProgressStorage describes.
+        """
+
         def operation(client: Any) -> list[RemoteObject]:
             listing = self._bucket(client, bucket).ls(prefix=prefix or None)
-            return [
-                RemoteObject(
-                    name=obj.name,
-                    bytes=int(obj.bytes),
-                    last_modified=obj.last_modified,
-                    hash=obj.hash,
-                    content_type=obj.content_type,
+            objects = []
+            for obj in listing:
+                objects.append(
+                    RemoteObject(
+                        name=obj.name,
+                        bytes=int(obj.bytes),
+                        last_modified=obj.last_modified,
+                        hash=obj.hash,
+                        content_type=obj.content_type,
+                    )
                 )
-                for obj in listing
-            ]
+                if on_progress is not None and len(objects) % LISTING_PROGRESS_STEP == 0:
+                    on_progress(len(objects))
+            if on_progress is not None:
+                on_progress(len(objects))
+            return objects
 
         return self._with_fresh_token_on_refusal(operation)
+
+    def object_count(self, bucket: str) -> int:
+        """Number of objects of the bucket, from its stat record in one request."""
+
+        def operation(client: Any) -> int:
+            response = client.get(f"/v1/buckets/{bucket}/stat", timeout=self._timeout)
+            return int(response.json()["objects_count"])
+
+        return self._with_fresh_token_on_refusal(operation)
+
+    def get_download_url(self, bucket: str, object_name: str) -> str:
+        """A URL from which the object can be fetched without a token.
+
+        The URL expires within seconds of being issued, so fetch right
+        after asking for it. Without redirect=false the endpoint redirects
+        to the object itself instead of answering with the URL.
+        """
+
+        def operation(client: Any) -> str:
+            response = client.get(
+                f"/v1/buckets/{bucket}/{object_url_path(object_name)}",
+                params={"redirect": "false"},
+                timeout=self._timeout,
+            )
+            return response.json()["url"]
+
+        return self._with_fresh_token_on_refusal(operation)
+
+    def download(
+        self,
+        bucket: str,
+        object_name: str,
+        local_path: Path,
+        *,
+        on_progress: DownloadProgress | None = None,
+    ) -> None:
+        """Fetch an object into local_path, which is created or replaced.
+
+        The file is written as the object arrives, so a download that fails
+        leaves a partial file: engine.download_object fetches into a
+        temporary file for that reason. on_progress is called after each
+        chunk with the bytes received and the size the response declares.
+        """
+        url = self.get_download_url(bucket, object_name)
+        with self._session.get(url, stream=True, timeout=self._timeout) as response:
+            response.raise_for_status()
+            length = response.headers.get("Content-Length")
+            total = int(length) if length else None
+            received = 0
+            with open(local_path, "wb") as file:
+                for chunk in response.iter_content(DOWNLOAD_CHUNK_SIZE):
+                    file.write(chunk)
+                    received += len(chunk)
+                    if on_progress is not None:
+                        on_progress(received, total)
 
     def upload(self, bucket: str, object_name: str, local_path: Path) -> None:
         local_path = Path(local_path)
