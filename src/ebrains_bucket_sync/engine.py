@@ -8,6 +8,11 @@ toolbox does:
     4. Delete the extraneous objects, if asked to and no upload failed.
 An upload that fails does not stop the sync: the other files are
 uploaded, the failure is recorded in the result, and nothing is deleted.
+
+When the local folder is a virtual bucket (see virtual_bucket.read_bucket_info),
+the sync must be of its bucket and prefix, its placeholders are left alone,
+and its manifest is updated from the listing the sync made. The .ebrains
+folder that describes it is left out of both sides of every sync.
 """
 
 from __future__ import annotations
@@ -18,7 +23,8 @@ import time
 import warnings
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TypeVar
 
@@ -26,9 +32,20 @@ from .exclude import exclude_files
 from .local import compute_md5, list_local_files
 from .model import ActionResult, BucketStorage, FileEntry, SyncOptions, SyncWarning
 from .paths import normalize_prefix
-from .plan import deletion_refusal, plan_sync
+from .plan import Refusal, deletion_refusal, plan_sync
 from .remote import list_remote_files
 from .storage import is_transient_error
+from .virtual_bucket import (
+    BucketInfo,
+    is_metadata_path,
+    manifest_after_push,
+    protect_placeholders,
+    read_bucket_info,
+    read_manifest,
+    virtual_bucket_refusal,
+    write_bucket_info,
+    write_manifest,
+)
 
 ALWAYS_EXCLUDED = ("*.multipart_manifest.json",)
 """The manifest ebrains_drive keeps next to a file while a multipart upload
@@ -97,7 +114,10 @@ def sync_to_bucket(
     Returns one ActionResult per file found on either side, sorted by
     path. With options.dry_run the plan is returned and nothing is
     changed. Raises SyncRefused, before anything is changed, when the
-    planned deletions look like a mistake (see plan.deletion_refusal).
+    planned deletions look like a mistake (see plan.deletion_refusal) or
+    when local_folder is a virtual bucket of another bucket or folder
+    (code "OtherBucket"), and VirtualBucketError when its .ebrains folder
+    is of a format this version does not know.
 
     A failed upload is tried again up to `attempts` times in all when the
     error looks transient, waiting retry_wait seconds, doubled each time.
@@ -107,12 +127,23 @@ def sync_to_bucket(
     emit = on_event or (lambda event: None)
     prefix = normalize_prefix(options.prefix)
 
-    # 1. List both sides
-    local_files = list_local_files(local_folder)
-    remote_files = list_remote_files(storage, bucket, prefix)
+    # A virtual bucket of another bucket or folder would end up holding the
+    # objects of two, so the sync is refused before the bucket is listed. A
+    # dry run changes nothing, so it shows the plan with the refusal instead.
+    bucket_info = read_bucket_info(local_folder)
+    other_bucket = virtual_bucket_refusal(bucket_info, bucket, prefix)
+    if other_bucket is not None and not options.dry_run:
+        raise SyncRefused(other_bucket.code, other_bucket.reason)
+    is_virtual_bucket = bucket_info is not None and other_bucket is None
+
+    # 1. List both sides. The listing before exclude patterns becomes the
+    # manifest of a virtual bucket.
+    local_files = _without_metadata(list_local_files(local_folder))
+    listed_at = datetime.now(timezone.utc)
+    listing = _without_metadata(list_remote_files(storage, bucket, prefix))
     patterns = tuple(options.exclude) + ALWAYS_EXCLUDED
     local_files = exclude_files(local_files, patterns)
-    remote_files = exclude_files(remote_files, patterns)
+    remote_files = exclude_files(listing, patterns)
 
     _warn_if_remote_times_unknown(local_files, remote_files, options.comparison, bucket, prefix)
 
@@ -123,24 +154,26 @@ def sync_to_bucket(
     plan = plan_sync(
         local_files, remote_files, comparison=options.comparison, delete=options.delete
     )
+    if is_virtual_bucket:
+        # The listing says which objects are not empty now, and the manifest
+        # which were not empty when the placeholders were made, so that a
+        # placeholder of an object removed since is not uploaded as a new
+        # empty object.
+        plan = protect_placeholders(plan, local_files, listing, read_manifest(local_folder))
     results = [
         ActionResult(item.path, _ACTION_NAMES[item.action], item.reason, item.bytes)
         for item in plan
     ]
-    refusal = deletion_refusal(plan, len(local_files), options.max_delete)
+    refusal = other_bucket or deletion_refusal(plan, len(local_files), options.max_delete)
     upload_indices = [k for k, result in enumerate(results) if result.action == "upload"]
     delete_indices = [k for k, result in enumerate(results) if result.action == "delete"]
 
     if options.dry_run:
-        # A dry run shows the plan, a refusal included, rather than stop
-        for k in upload_indices:
-            results[k].status = "planned"
-        for k in delete_indices:
-            if refusal is None:
-                results[k].status = "planned"
-            else:
-                results[k].status = "skipped"
-                results[k].message = refusal.reason
+        # A dry run shows the plan, a refusal included, rather than stop. A
+        # deletion refusal is reported on the deletions; OtherBucket stops
+        # the uploads as well.
+        _mark_dry_run(results, upload_indices, other_bucket)
+        _mark_dry_run(results, delete_indices, refusal)
         emit(
             SyncEvent("planned", results=tuple(results), message=refusal.reason if refusal else "")
         )
@@ -203,8 +236,47 @@ def sync_to_bucket(
             result.status = "done"
             emit(SyncEvent("deleted", result.path, result.bytes, index, total))
 
+    if is_virtual_bucket:
+        _update_metadata(local_folder, bucket_info, listed_at, listing, local_files, results)
+
     emit(SyncEvent("finished", results=tuple(results)))
     return results
+
+
+def _without_metadata(files: list[FileEntry]) -> list[FileEntry]:
+    """The files outside .ebrains, which describes a virtual bucket and is never synced."""
+    return [entry for entry in files if not is_metadata_path(entry.path)]
+
+
+def _mark_dry_run(results: list[ActionResult], indices: list[int], refusal: Refusal | None) -> None:
+    """Report actions of a dry run as planned, or as skipped by the refusal that stops them."""
+    for k in indices:
+        if refusal is None:
+            results[k].status = "planned"
+        else:
+            results[k].status = "skipped"
+            results[k].message = refusal.reason
+
+
+def _update_metadata(
+    local_folder: Path,
+    info: BucketInfo,
+    listed_at: datetime,
+    listing: list[FileEntry],
+    local_files: list[FileEntry],
+    results: list[ActionResult],
+) -> None:
+    """Record the listing of the sync as the manifest of the virtual bucket.
+
+    The sync changed the bucket after the listing, so the files it uploaded
+    and the objects it deleted are applied to the listing. A failed
+    transfer leaves the entry as the listing gave it.
+    """
+    uploaded_paths = {r.path for r in results if r.action == "upload" and r.status == "done"}
+    deleted_paths = [r.path for r in results if r.action == "delete" and r.status == "done"]
+    uploaded = [entry for entry in local_files if entry.path in uploaded_paths]
+    write_manifest(local_folder, manifest_after_push(listing, uploaded, deleted_paths))
+    write_bucket_info(local_folder, replace(info, listed_at=listed_at))
 
 
 def _error_message(error: BaseException) -> str:

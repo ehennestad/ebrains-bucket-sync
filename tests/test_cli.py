@@ -6,10 +6,20 @@ import pytest
 from click.testing import CliRunner
 
 from ebrains_bucket_sync import cli
+from ebrains_bucket_sync.virtual_bucket import BucketInfo, write_bucket_info
 
 from .conftest import FakeStorage, write
 
 SPEC = Path(__file__).resolve().parents[1] / "spec"
+
+
+def assert_matches_plan_schema(plan: dict) -> None:
+    registry = {
+        "sync-policy.schema.json": json.loads((SPEC / "sync-policy.schema.json").read_text())
+    }
+    resolver = jsonschema.RefResolver(base_uri="", referrer={}, store=registry)
+    schema = json.loads((SPEC / "sync-plan.schema.json").read_text())
+    jsonschema.validate(plan, schema, resolver=resolver)
 
 
 @pytest.fixture
@@ -108,12 +118,7 @@ def test_push_writes_a_plan_file_that_matches_the_schema(runner, folder, fake_st
     assert result.exit_code == 0, result.output
     assert result.output == ""
     plan = json.loads(plan_file.read_text())
-    registry = {
-        "sync-policy.schema.json": json.loads((SPEC / "sync-policy.schema.json").read_text())
-    }
-    resolver = jsonschema.RefResolver(base_uri="", referrer={}, store=registry)
-    schema = json.loads((SPEC / "sync-plan.schema.json").read_text())
-    jsonschema.validate(plan, schema, resolver=resolver)
+    assert_matches_plan_schema(plan)
     assert plan["policy"] == {
         "comparison": "SizeAndTime",
         "delete": True,
@@ -178,6 +183,65 @@ def test_push_plan_file_of_a_refused_run_holds_the_plan(runner, folder, fake_sto
     plan = json.loads(plan_file.read_text())
     assert plan["refusal"].startswith("The source has no files")
     assert plan["actions"][0]["path"] == "extra.txt"
+
+
+def test_push_of_a_virtual_bucket_reports_its_placeholders(runner, folder, fake_storage, tmp_path):
+    write_bucket_info(folder, BucketInfo("b"))
+    write(folder, "placeholder.dat", b"")
+    write(folder, "a.txt", b"a")
+    fake_storage.put("b", "placeholder.dat", b"xyz")
+    plan_file = tmp_path / "plan.json"
+
+    result = runner.invoke(cli.main, ["push", str(folder), "b", "--plan-file", str(plan_file)])
+
+    assert result.exit_code == 0, result.output
+    assert "1 file(s) to upload (1 B), 0 to delete, 0 unchanged." in result.output
+    assert (
+        "1 empty file(s) are placeholders of objects not yet downloaded and are left alone."
+        in result.output
+    )
+    assert fake_storage.content("b", "placeholder.dat") == b"xyz"
+    plan = json.loads(plan_file.read_text())
+    assert_matches_plan_schema(plan)
+    assert [(a["path"], a["action"], a["reason"], a["status"]) for a in plan["actions"]] == [
+        ("a.txt", "upload", "new", "done"),
+        ("placeholder.dat", "none", "placeholder", ""),
+    ]
+
+
+def test_push_of_a_virtual_bucket_to_another_bucket_exits_with_2(
+    runner, folder, fake_storage, tmp_path
+):
+    write_bucket_info(folder, BucketInfo("b", "results"))
+    write(folder, "a.txt", b"a")
+    plan_file = tmp_path / "plan.json"
+
+    result = runner.invoke(cli.main, ["push", str(folder), "other", "--plan-file", str(plan_file)])
+
+    assert result.exit_code == 2
+    assert (
+        "Stopped before changing anything: The folder is a virtual bucket of bucket 'b', "
+        "folder 'results/', not of bucket 'other'." in result.output
+    )
+    assert fake_storage.listings == []
+    plan = json.loads(plan_file.read_text())
+    assert_matches_plan_schema(plan)
+    assert plan["refusal"].startswith("The folder is a virtual bucket of")
+    assert plan["actions"] == []
+
+
+def test_push_of_a_virtual_bucket_of_a_newer_format_is_an_error(runner, folder, fake_storage):
+    metadata = folder / ".ebrains"
+    metadata.mkdir()
+    (metadata / "bucket.json").write_text(
+        json.dumps({"format_version": 2, "bucket": "b", "prefix": "", "listed_at": None})
+    )
+
+    result = runner.invoke(cli.main, ["push", str(folder), "b"])
+
+    assert result.exit_code == 1
+    assert "Error: " in result.output and "format_version 2" in result.output
+    assert fake_storage.listings == []
 
 
 def test_login_and_logout_use_the_authenticator(runner, monkeypatch):
