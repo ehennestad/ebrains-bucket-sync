@@ -16,6 +16,7 @@ from .model import COMPARISONS, ActionResult, BucketStorage, SyncOptions, SyncWa
 from .paths import normalize_prefix
 from .planfile import plan_to_dict, write_plan_file
 from .storage import EbrainsDriveStorage
+from .text import format_size
 from .virtual_bucket import VirtualBucketError
 
 EXIT_INCOMPLETE = 1
@@ -244,18 +245,6 @@ class ConsolePrinter:
                 f'"{failed[0].path}". Run the sync again to retry them.',
                 err=True,
             )
-
-
-def format_size(n_bytes: float) -> str:
-    """A size such as "1.5 MB", in units of 1024."""
-    value = float(n_bytes)
-    units = ["B", "KB", "MB", "GB", "TB"]
-    unit = units[0]
-    for unit in units:
-        if value < 1024 or unit == units[-1]:
-            break
-        value /= 1024
-    return f"{value:.0f} {unit}" if unit == "B" else f"{value:.1f} {unit}"
 
 
 def _show_warning(message, category, filename, lineno, file=None, line=None) -> None:  # noqa: B006
