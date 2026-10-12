@@ -25,6 +25,8 @@ dependencies = [
   "requests>=2.28",
   "click>=8.1",
   "platformdirs>=3.0",
+  # The window of the virtual bucket browser (the browse command)
+  "pywebview>=6.2",
 ]
 
 [project.scripts]

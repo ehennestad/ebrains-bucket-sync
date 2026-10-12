@@ -11,6 +11,7 @@ from pathlib import Path
 import click
 
 from .auth import AuthError, DeviceFlowAuthenticator
+from .browser import ENV_PAGE, VirtualBucket, default_page_path, show_browser
 from .engine import SyncEvent, SyncRefused, sync_to_bucket
 from .exclude import ExcludeFileError, read_exclude_file
 from .model import COMPARISONS, ActionResult, BucketStorage, SyncOptions, SyncWarning
@@ -179,6 +180,43 @@ def push(
         )
 
     sys.exit(exit_code)
+
+
+@main.command()
+@click.argument("folder", type=click.Path(file_okay=False, path_type=Path))
+@click.option(
+    "--bucket",
+    help="Name of the bucket. Needed for a folder that is not a virtual bucket yet; for one "
+    "that is, it must be the bucket of the folder.",
+)
+@click.option(
+    "--prefix",
+    default=None,
+    help='Folder of the bucket that the virtual bucket holds, such as "results". Default: the '
+    "folder of the virtual bucket, or the whole bucket for a folder that is not one yet.",
+)
+@click.option(
+    "--page",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    envvar=ENV_PAGE,
+    help="The virtualBucketBrowser.html page to show. Default: the page of the EBRAINS-MATLAB "
+    "checkout.",
+)
+def browse(folder: Path, bucket: str | None, prefix: str | None, page: Path | None) -> None:
+    """Browse the virtual bucket in FOLDER, download files and make them online only.
+
+    A folder that is not a virtual bucket becomes one of --bucket. A
+    folder that does not exist is created, and filled with placeholders
+    from a listing of the bucket.
+    """
+    is_new_folder = not folder.is_dir()
+    try:
+        virtual_bucket = VirtualBucket.open(folder, bucket, prefix)
+        if page is None:
+            page = default_page_path()
+    except (VirtualBucketError, FileNotFoundError) as error:
+        raise click.ClickException(str(error)) from error
+    show_browser(virtual_bucket, make_storage(), page, update_on_ready=is_new_folder)
 
 
 class ConsolePrinter:
