@@ -1,0 +1,90 @@
+{
+  "description": "Without a manifest an empty file cannot be told from an emptied one, so the plan is kept.",
+  "plan": [
+    {
+      "path": "edited.dat",
+      "action": "copy",
+      "reason": "size",
+      "bytes": 4
+    },
+    {
+      "path": "empty.dat",
+      "action": "none",
+      "reason": "unchanged",
+      "bytes": 0
+    },
+    {
+      "path": "gone.dat",
+      "action": "delete",
+      "reason": "extraneous",
+      "bytes": 3
+    },
+    {
+      "path": "placeholder.dat",
+      "action": "copy",
+      "reason": "size",
+      "bytes": 0
+    },
+    {
+      "path": "removed.dat",
+      "action": "copy",
+      "reason": "new",
+      "bytes": 0
+    }
+  ],
+  "local": [
+    {
+      "path": "edited.dat",
+      "bytes": 4,
+      "modified_time": "2024-01-03T00:00:00Z"
+    },
+    {
+      "path": "empty.dat",
+      "bytes": 0,
+      "modified_time": "2024-01-03T00:00:00Z"
+    },
+    {
+      "path": "placeholder.dat",
+      "bytes": 0,
+      "modified_time": "2024-01-03T00:00:00Z"
+    },
+    {
+      "path": "removed.dat",
+      "bytes": 0,
+      "modified_time": "2024-01-03T00:00:00Z"
+    }
+  ],
+  "manifest": null,
+  "expected": [
+    {
+      "path": "edited.dat",
+      "action": "copy",
+      "reason": "size",
+      "bytes": 4
+    },
+    {
+      "path": "empty.dat",
+      "action": "none",
+      "reason": "unchanged",
+      "bytes": 0
+    },
+    {
+      "path": "gone.dat",
+      "action": "delete",
+      "reason": "extraneous",
+      "bytes": 3
+    },
+    {
+      "path": "placeholder.dat",
+      "action": "copy",
+      "reason": "size",
+      "bytes": 0
+    },
+    {
+      "path": "removed.dat",
+      "action": "copy",
+      "reason": "new",
+      "bytes": 0
+    }
+  ]
+}
