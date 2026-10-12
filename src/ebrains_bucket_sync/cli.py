@@ -12,6 +12,7 @@ import click
 
 from .auth import AuthError, DeviceFlowAuthenticator
 from .engine import SyncEvent, SyncRefused, sync_to_bucket
+from .exclude import ExcludeFileError, read_exclude_file
 from .model import COMPARISONS, ActionResult, BucketStorage, SyncOptions, SyncWarning
 from .paths import normalize_prefix
 from .planfile import plan_to_dict, write_plan_file
@@ -83,6 +84,14 @@ def logout() -> None:
     metavar="PATTERN",
     help='Wildcard pattern of paths to leave out, such as "*.tmp" or ".git". May be repeated.',
 )
+@click.option(
+    "--exclude-from",
+    multiple=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    metavar="FILE",
+    help="File of exclude patterns, one per line, in the layout of a .gitignore file. "
+    "May be repeated.",
+)
 @click.option("--dry-run", is_flag=True, help="Only show what would be uploaded and deleted.")
 @click.option(
     "--max-delete",
@@ -110,6 +119,7 @@ def push(
     delete: bool,
     comparison: str,
     exclude: tuple[str, ...],
+    exclude_from: tuple[Path, ...],
     dry_run: bool,
     max_delete: int | None,
     workers: int,
@@ -122,11 +132,21 @@ def push(
     picks up where it stopped when run again. Object names are the paths
     relative to LOCAL_FOLDER.
     """
+    patterns = list(exclude)
+    for exclude_file in exclude_from:
+        try:
+            patterns.extend(read_exclude_file(exclude_file))
+        except ExcludeFileError as error:
+            raise click.BadParameter(
+                f'"{exclude_file}", line {error.line_number} ("{error.line}"): {error.reason}',
+                param_hint="'--exclude-from'",
+            ) from error
+
     options = SyncOptions(
         prefix=prefix,
         delete=delete,
         comparison=comparison,
-        exclude=tuple(exclude),
+        exclude=tuple(patterns),
         dry_run=dry_run,
         max_delete=math.inf if max_delete is None else max_delete,
         workers=workers,
