@@ -33,6 +33,8 @@ Object names are the paths relative to the local folder. Files the bucket alread
 
 `--exclude PATTERN` leaves out paths that match a wildcard pattern, with the rules of a `.gitignore` file: `*.tmp` in every folder, `.git/` for that folder wherever it is, `raw/scratch` for that path from the root. `--plan-file plan.json` writes the plan and the outcome as JSON.
 
+A folder made with `createVirtualBucket` in the MATLAB toolbox stands for one bucket, or a folder of one, and holds an empty placeholder file for each object that is not downloaded. A push of such a folder is refused unless the bucket and `--prefix` are the ones it stands for, leaves the placeholders alone, and never syncs the `.ebrains` folder that describes it. After the push, the manifest in `.ebrains` records what the bucket holds.
+
 An upload that fails does not stop the sync. The other files are uploaded, nothing is deleted, the command exits with status 1, and running it again retries the failed files.
 
 From Python:

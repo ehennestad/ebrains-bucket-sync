@@ -40,6 +40,7 @@ class FakeStorage:
         self.buckets: dict[str, dict[str, FakeObject]] = defaultdict(dict)
         self.errors: dict[str, Exception] = {}
         self.upload_attempts: Counter[str] = Counter()
+        self.listings: list[tuple[str, str]] = []
         self.uploaded: list[tuple[str, str]] = []
         self.deleted: list[tuple[str, str]] = []
 
@@ -60,6 +61,7 @@ class FakeStorage:
         return self.buckets[bucket][name].content
 
     def list_objects(self, bucket: str, prefix: str) -> list[RemoteObject]:
+        self.listings.append((bucket, prefix))
         return [
             RemoteObject(name, len(obj.content), obj.last_modified, obj.hash, obj.content_type)
             for name, obj in sorted(self.buckets[bucket].items())
