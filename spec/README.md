@@ -50,11 +50,24 @@ Copies run first. Nothing is deleted after a copy failed, since a failure may me
 
 Patterns are applied to both sides before planning, so excluded files are neither transferred nor deleted. `*` matches any characters except `/`, `**` any characters, `?` one character except `/`. A pattern without `/` matches a path segment at any depth, and a matched folder excludes everything below it. A pattern with `/` is matched from the root of the synced folder, and also excludes everything below a matched folder. Leading and trailing `/` are ignored.
 
+The patterns look like those of a `.gitignore` file but differ from them in these ways:
+
+- `**` between two slashes stands for at least one folder, so `logs/**/*.log` does not match `logs/a.log`, and `**/data` does not match `data` at the root.
+- A trailing `/` does not limit a pattern to folders: `build/` also excludes a file named `build`.
+- `[`, `]` and `\` match themselves, so `*.py[co]` matches only a name that ends in `.py[co]`.
+- No pattern re-includes paths.
+
+## Exclude files
+
+An exclude file holds one pattern per line, as UTF-8 text. Lines end with LF, CRLF or CR. A byte order mark at the start of the file and spaces and tabs around a line are removed. Blank lines and lines that start with `#` are skipped; a `#` later in a line is part of the pattern. A line that starts with `!` re-includes paths in a `.gitignore` file, which patterns cannot do, so the file is refused, naming the line, rather than the line skipped. `templates/dataset.ignore` is an exclude file for the files that do not belong in a published dataset.
+
 ## Fixtures
 
 `fixtures/plan/*.json`: `policy` (`comparison`, `delete`), `source` and `target` entry lists, and the `expected` plan rows. `modified_time` is ISO 8601 UTC or null; `hash` may be omitted.
 
 `fixtures/exclude/*.json`: `patterns`, `paths`, and `expected_kept`, in order.
+
+`fixtures/exclude-file/*.json`: the `text` of a file, and either the `expected_patterns`, in order, or the `expected_error_line` of a refused file, counted from 1.
 
 `fixtures/refusal/*.json`: a `plan`, `n_source_files`, `max_delete` (null for no limit) and `expected_code` (null for no refusal).
 

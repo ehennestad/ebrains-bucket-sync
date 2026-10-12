@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from ebrains_bucket_sync.exclude import exclude_files
+from ebrains_bucket_sync.exclude import ExcludeFileError, exclude_files, parse_exclude_file
 from ebrains_bucket_sync.model import FileEntry, PlanItem
 from ebrains_bucket_sync.plan import deletion_refusal, plan_sync
 from ebrains_bucket_sync.remote import parse_listing_time
@@ -46,6 +46,16 @@ def test_exclude_fixture(case):
     kept = exclude_files([FileEntry(path, 1) for path in case["paths"]], case["patterns"])
 
     assert [item.path for item in kept] == case["expected_kept"]
+
+
+@pytest.mark.parametrize("case", load_cases("exclude-file"))
+def test_exclude_file_fixture(case):
+    if "expected_error_line" in case:
+        with pytest.raises(ExcludeFileError) as error:
+            parse_exclude_file(case["text"])
+        assert error.value.line_number == case["expected_error_line"]
+    else:
+        assert parse_exclude_file(case["text"]) == case["expected_patterns"]
 
 
 @pytest.mark.parametrize("case", load_cases("refusal"))

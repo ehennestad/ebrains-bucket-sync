@@ -126,6 +126,46 @@ def test_push_writes_a_plan_file_that_matches_the_schema(runner, folder, fake_st
     ]
 
 
+def test_push_combines_exclude_and_exclude_from(runner, folder, fake_storage, tmp_path):
+    write(folder, "a.txt", b"a")
+    write(folder, "b.tmp", b"b")
+    write(folder, ".git/config", b"c")
+    exclude_file = tmp_path / "dataset.ignore"
+    exclude_file.write_text("# version control\n.git/\n")
+
+    result = runner.invoke(
+        cli.main,
+        ["push", str(folder), "b", "--exclude", "*.tmp", "--exclude-from", str(exclude_file)],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert fake_storage.uploaded == [("b", "a.txt")]
+
+
+def test_push_refuses_an_exclude_file_that_re_includes(runner, folder, fake_storage, tmp_path):
+    write(folder, "a.txt", b"a")
+    exclude_file = tmp_path / "dataset.ignore"
+    exclude_file.write_text("*.txt\n!a.txt\n")
+
+    result = runner.invoke(
+        cli.main, ["push", str(folder), "b", "--exclude-from", str(exclude_file)]
+    )
+
+    assert result.exit_code == 2
+    assert f'"{exclude_file}", line 2 ("!a.txt")' in result.output
+    assert fake_storage.uploaded == []
+
+
+def test_push_refuses_a_missing_exclude_file(runner, folder, fake_storage, tmp_path):
+    result = runner.invoke(
+        cli.main, ["push", str(folder), "b", "--exclude-from", str(tmp_path / "missing.ignore")]
+    )
+
+    assert result.exit_code == 2
+    assert "does not exist" in result.output
+    assert fake_storage.uploaded == []
+
+
 def test_push_plan_file_of_a_refused_run_holds_the_plan(runner, folder, fake_storage, tmp_path):
     fake_storage.put("b", "extra.txt", b"e")
     plan_file = tmp_path / "plan.json"

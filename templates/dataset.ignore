@@ -1,0 +1,54 @@
+# Exclude patterns for publishing a dataset. Copy this file, add the
+# patterns of your dataset, and pass it to a sync:
+#
+#     ebrains-bucket-sync push my-dataset my-bucket --exclude-from dataset.ignore
+#
+# A pattern without "/" leaves out files and folders of that name in every
+# folder. A pattern with "/" is matched from the root of the synced folder.
+# The rules are those of spec/README.md, a subset of a .gitignore file: a
+# line that starts with "!" is refused.
+
+# Version control
+.git/
+.gitignore
+.gitattributes
+.gitmodules
+.svn/
+.hg/
+
+# Operating system files
+.DS_Store
+._*
+.Spotlight-V100/
+.Trashes/
+.fseventsd/
+Thumbs.db
+desktop.ini
+
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.pytest_cache/
+.venv/
+venv/
+
+# MATLAB
+*.asv
+*.m~
+
+# R
+.Rhistory
+.Rproj.user/
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*~
+
+# Office lock files
+~$*
+
+# Secrets, such as tokens and passwords
+.env

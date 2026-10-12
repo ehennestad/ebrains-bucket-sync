@@ -31,7 +31,15 @@ Object names are the paths relative to the local folder. Files the bucket alread
 
 `--delete` also deletes the objects that the local folder does not have, which makes the bucket (or the folder of it) an exact mirror. A sync refuses to empty a bucket from an empty folder, and `--max-delete N` stops it before it deletes more than N objects. Nothing is deleted after an upload failed.
 
-`--exclude PATTERN` leaves out paths that match a wildcard pattern, with the rules of a `.gitignore` file: `*.tmp` in every folder, `.git/` for that folder wherever it is, `raw/scratch` for that path from the root. `--plan-file plan.json` writes the plan and the outcome as JSON.
+`--exclude PATTERN` leaves out paths that match a wildcard pattern: `*.tmp` in every folder, `.git/` for that folder wherever it is, `raw/scratch` for that path from the root. Excluded paths are neither uploaded nor deleted, so excluding a path does not remove it from the bucket. The patterns look like those of a `.gitignore` file but follow simpler rules, listed in [spec/README.md](https://github.com/ehennestad/ebrains-bucket-sync/blob/main/spec/README.md#exclude-patterns); for example, a pattern cannot re-include paths with `!`.
+
+`--exclude-from FILE` reads patterns from a file, one per line, with `#` for comments. [templates/dataset.ignore](https://github.com/ehennestad/ebrains-bucket-sync/blob/main/templates/dataset.ignore) leaves out the files that do not belong in a published dataset, such as `.git/`, `.DS_Store` and `__pycache__/`. Copy it next to your data, add what else to leave out, and pass it to each sync:
+
+```bash
+ebrains-bucket-sync push my-dataset my-bucket --exclude-from dataset.ignore
+```
+
+`--plan-file plan.json` writes the plan and the outcome as JSON.
 
 An upload that fails does not stop the sync. The other files are uploaded, nothing is deleted, the command exits with status 1, and running it again retries the failed files.
 
