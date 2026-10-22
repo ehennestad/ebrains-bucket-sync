@@ -198,7 +198,7 @@ def test_push_records_the_listing_as_the_manifest_after_a_failed_upload(folder, 
     # file with an unknown time, without the failed one.
     assert read_manifest(folder) == [
         FileEntry("extra.txt", 1, utc(2024, 6, 1, 12), md5_of(b"e")),
-        FileEntry("good.txt", 1, None, ""),
+        FileEntry("good.txt", 1, None, md5_of(b"g")),
         FileEntry("placeholder.dat", 3, utc(2024, 6, 1, 12), md5_of(b"xyz")),
         FileEntry("skipped.tmp", 1, utc(2024, 6, 1, 12), md5_of(b"t")),
     ]
@@ -219,7 +219,7 @@ def test_push_takes_deleted_objects_out_of_the_manifest(folder, storage):
         "extra.txt": ("delete", "extraneous", "done"),
         "new.txt": ("upload", "new", "done"),
     }
-    assert read_manifest(folder) == [FileEntry("new.txt", 2, None, "")]
+    assert read_manifest(folder) == [FileEntry("new.txt", 2, None, md5_of(b"nn"))]
 
 
 def test_uploaded_entries_carry_the_checksum_the_comparison_computed(folder, storage):

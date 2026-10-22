@@ -247,6 +247,7 @@ def sync_to_bucket(
             manifest,
             local_files,
             results,
+            md5,
         )
 
     emit(SyncEvent("finished", results=tuple(results)))
@@ -277,6 +278,7 @@ def _update_metadata(
     manifest: list[FileEntry] | None,
     local_files: list[FileEntry],
     results: list[ActionResult],
+    md5: Callable[[Path], str],
 ) -> None:
     """Record the listing of the sync as the manifest of the virtual bucket.
 
@@ -288,7 +290,13 @@ def _update_metadata(
     """
     uploaded_paths = {r.path for r in results if r.action == "upload" and r.status == "done"}
     deleted_paths = [r.path for r in results if r.action == "delete" and r.status == "done"]
-    uploaded = [entry for entry in local_files if entry.path in uploaded_paths]
+    # The file states compare an uploaded file by its checksum until a
+    # listing gives its object a time, so each gets one
+    uploaded = [
+        replace(entry, hash=entry.hash or md5(local_folder / entry.path))
+        for entry in local_files
+        if entry.path in uploaded_paths
+    ]
     new_manifest = manifest_after_push(
         listing, uploaded, deleted_paths, local=unexcluded_local_files, manifest=manifest
     )
