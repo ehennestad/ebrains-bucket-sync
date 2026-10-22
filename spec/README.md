@@ -79,6 +79,8 @@ A virtual bucket is laid out as a sync folder with the same prefix: a path is re
 
 `manifest.csv` is UTF-8 text without a byte order mark. Lines end with LF. The first line is the header `path,bytes,modified_time,hash`, and each further line is a file entry with the fields of [File entries](#file-entries). `path` is relative to the prefix. `bytes` is a whole number. `modified_time` is written as `YYYY-MM-DDTHH:MM:SSZ`, or left empty where it is unknown, and `hash` is lowercase or empty. A field that holds a comma, a double quote or a line break is put in double quotes, with each double quote in it doubled; no other field is quoted. Rows are sorted by path, in Unicode code point order. Folder placeholders and unsafe names are left out, as for a listing.
 
+An implementation refuses a virtual bucket whose `bucket.json` does not follow `virtual-bucket.schema.json`, or whose `manifest.csv` does not follow this layout: a file that is not UTF-8 text, a first line other than the header, a row without four fields, an empty line, a path that is empty, unsafe or on an earlier row, a `bytes` that is not a whole number, a `modified_time` that is neither empty nor a time in the form above, or a `hash` that is neither empty nor 32 lowercase hexadecimal digits. A reader also takes CR LF as a line end. A row is refused rather than skipped, since a missing entry can let a placeholder replace its object. The error names the file and, for the manifest, the line, counted from 1, where a row that spans lines starts.
+
 A file is written in full to a temporary file in `.ebrains` and then renamed over the old one, so an interrupted write leaves the old file. Files in `.ebrains` that an implementation does not know are left as they are. An implementation refuses a virtual bucket whose `format_version` is greater than the one it knows.
 
 ### The `.ebrains` folder is not synced
@@ -95,7 +97,7 @@ A placeholder of a removed object is a placeholder that the listing the sync mad
 
 A file downloaded into a virtual bucket gets the `modified_time` of its object, so that the file states and a later sync in either direction find it unchanged.
 
-After a sync the manifest is the listing the sync made, before exclude patterns, and `listed_at` is the time of that listing. A sync to the bucket then adds the entry of each file it uploaded, with the local `bytes` and `hash` and an unknown `modified_time`, and removes the entry of each object it deleted. It also keeps the manifest entry of each placeholder of a removed object, so that the next sync to the bucket still knows the file for a placeholder. A failed transfer leaves the entry as the listing gave it.
+After a sync the manifest is the listing the sync made, before exclude patterns, and `listed_at` is the time of that listing. A sync to the bucket then adds the entry of each file it uploaded, with the local `bytes`, the MD5 checksum of the uploaded file as `hash` and an unknown `modified_time`, and removes the entry of each object it deleted. It also keeps the manifest entry of each placeholder of a removed object, so that the next sync to the bucket still knows the file for a placeholder. A failed transfer leaves the entry as the listing gave it.
 
 ### File states
 
@@ -106,7 +108,11 @@ The state of each path of a virtual bucket, sorted by path:
   1. A path only the manifest has: `online_only`.
   2. A path only the local folder has: `local_only`.
   3. A placeholder: `online_only`.
-  4. Otherwise the file is compared with its manifest entry by `SizeAndTime`, in both directions: `differs` where the sizes differ or where either time is later than the other by more than 2 seconds, and `downloaded` otherwise. A local file changed after it was downloaded is later than its object, and its changes exist only there. An unknown time on either side leaves the file `downloaded`, as in a plan.
+  4. Otherwise the file is compared with its manifest entry:
+     1. Sizes that differ: `differs`.
+     2. Times that are both known and differ by no more than 2 seconds: `downloaded`, since a download gets the time of its object.
+     3. Otherwise, where the manifest entry has a `hash`, the MD5 checksum of the local file decides: `downloaded` where the two are equal, and `differs` where not. The checksum is computed only for these files. A pushed file has an unknown time in the manifest until the next listing, and the time of its upload after it, which is later than the local file, so its checksum tells whether it was changed since.
+     4. Otherwise, times that are both known: `differs`. A local file changed after it was downloaded is later than its object, and its changes exist only there. An unknown time leaves the file `downloaded`, as in a plan.
 
 ## Fixtures
 
@@ -118,9 +124,9 @@ The state of each path of a virtual bucket, sorted by path:
 
 `fixtures/refusal/*.json`: a `plan`, `n_source_files`, `max_delete` (null for no limit) and `expected_code` (null for no refusal).
 
-`fixtures/manifest/*.json`: the `text` of a `manifest.csv` and its `entries`, in order. Reading the text gives the entries, and writing the entries gives the text.
+`fixtures/manifest/*.json`: the `text` of a `manifest.csv` and either its `entries`, in order, or the `expected_error_line` of a refused text. Reading the text gives the entries, and writing the entries gives the text.
 
-`fixtures/file-state/*.json`: `local` entries, `manifest` entries (null for no manifest), and the `expected` rows of `path` and `state`.
+`fixtures/file-state/*.json`: `local` entries, `manifest` entries (null for no manifest), and the `expected` rows of `path` and `state`. The `hash` of a local entry is the MD5 checksum of the file, where the rules need it.
 
 `fixtures/placeholder/*.json`: the `direction` of a sync (`to_bucket` or `from_bucket`), its `plan`, the `local` entries, the `listing` the sync made and the `manifest` entries (null for no manifest), and the `expected` plan.
 

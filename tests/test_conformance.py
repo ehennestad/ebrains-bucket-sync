@@ -11,6 +11,7 @@ from ebrains_bucket_sync.model import FileEntry, PlanItem
 from ebrains_bucket_sync.plan import deletion_refusal, plan_sync
 from ebrains_bucket_sync.remote import parse_listing_time
 from ebrains_bucket_sync.virtual_bucket import (
+    ManifestError,
     delete_removed_placeholders,
     file_states,
     format_manifest,
@@ -82,6 +83,12 @@ def to_entries(items):
 
 @pytest.mark.parametrize("case", load_cases("manifest"))
 def test_manifest_fixture(case):
+    if "expected_error_line" in case:
+        with pytest.raises(ManifestError) as error:
+            parse_manifest(case["text"])
+        assert error.value.line_number == case["expected_error_line"]
+        return
+
     entries = to_entries(case["entries"])
 
     assert parse_manifest(case["text"]) == entries
