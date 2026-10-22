@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import threading
 import time
@@ -101,6 +102,14 @@ class CountingStorage(FakeStorage):
         return objects
 
 
+def write_downloaded(folder, relative_path, content, modified_time=OBJECT_TIME_UTC):
+    """Write a file as a download does: with the time of its object."""
+    path = write(folder, relative_path, content)
+    timestamp = modified_time.timestamp()
+    os.utime(path, (timestamp, timestamp))
+    return path
+
+
 def make_virtual_bucket(folder, bucket="b", prefix="", manifest=None):
     listed_at = None if manifest is None else LISTED_AT
     write_bucket_info(folder, BucketInfo(bucket, prefix, listed_at))
@@ -179,8 +188,8 @@ def test_ready_sends_the_state_of_the_files(folder, storage, monkeypatch):
     make_virtual_bucket(folder, "b", "results", manifest)
     write(folder, "differs.txt", b"abcd")
     write(folder, "placeholder.dat", b"")
-    write(folder, "same.txt", b"ab")
-    write(folder, "sub/deep.txt", b"d")
+    write_downloaded(folder, "same.txt", b"ab")
+    write_downloaded(folder, "sub/deep.txt", b"d")
     write(folder, "sub/mine.txt", b"m")
     write(folder, ".DS_Store", b"finder")
     write(folder, ".ebrains/notes.txt", b"n")
@@ -257,7 +266,7 @@ def test_refresh_reads_the_folder_again_and_clears_the_message(folder, storage):
 
 def test_update_creates_placeholders_and_writes_the_manifest(folder, storage):
     make_virtual_bucket(folder, "b", "results")
-    write(folder, "kept.dat", b"kept")
+    write_downloaded(folder, "kept.dat", b"kept")
     write(folder, "mine.txt", b"m")
     storage.put("b", "results/kept.dat", b"kept", last_modified=OBJECT_TIME)
     storage.put("b", "results/new/one.dat", b"xyz", last_modified=OBJECT_TIME)
@@ -321,8 +330,54 @@ def test_update_shows_the_progress_of_a_storage_that_reports_it(folder, storage)
     assert values == [0.0, 0.25, 0.5, 0.75, 1.0, 1.0]
     assert page.named("progress")[1]["message"] == "Listed 0 of about 4 objects."
     assert page.named("progress")[2]["message"].startswith("Listed 1 of about 4 objects. About ")
-    assert page.named("progress")[-1]["message"] == "Creating placeholders for new objects..."
+    assert page.named("progress")[-1]["message"] == "Updating the placeholders..."
     assert len(read_manifest(folder)) == 4
+
+
+def test_update_deletes_the_placeholders_of_removed_objects(folder, storage):
+    manifest = [
+        FileEntry("gone.dat", 3, OBJECT_TIME_UTC),
+        FileEntry("kept.dat", 4, OBJECT_TIME_UTC, md5_of(b"kept")),
+        FileEntry("written.dat", 3, OBJECT_TIME_UTC),
+    ]
+    make_virtual_bucket(folder, "b", manifest=manifest)
+    write(folder, "gone.dat", b"")
+    write(folder, "kept.dat", b"")
+    write(folder, "written.dat", b"")
+    storage.put("b", "kept.dat", b"kept", last_modified=OBJECT_TIME)
+    host, page = make_host(folder, storage)
+    # Written into after the window opened, so it holds data now
+    write(folder, "written.dat", b"new")
+
+    request(host, "update")
+
+    assert not (folder / "gone.dat").exists()
+    assert (folder / "kept.dat").read_bytes() == b""
+    assert (folder / "written.dat").read_bytes() == b"new"
+    assert read_manifest(folder) == [FileEntry("kept.dat", 4, OBJECT_TIME_UTC, md5_of(b"kept"))]
+    assert page.state["files"]["path"] == ["kept.dat", "written.dat"]
+    assert page.state["files"]["state"] == ["online_only", "local_only"]
+    assert page.state["message"] == (
+        "Added placeholders for 0 new objects. Deleted the placeholders of 1 removed object."
+    )
+
+
+def test_update_keeps_the_entry_of_a_placeholder_it_cannot_delete(folder, storage, monkeypatch):
+    removed = FileEntry("gone.dat", 3, OBJECT_TIME_UTC)
+    make_virtual_bucket(folder, "b", manifest=[removed])
+    write(folder, "gone.dat", b"")
+    host, page = make_host(folder, storage)
+
+    def refuse_unlink(path, *args, **kwargs):
+        raise PermissionError(f"Not permitted: {path}")
+
+    monkeypatch.setattr("pathlib.Path.unlink", refuse_unlink)
+    request(host, "update")
+
+    assert (folder / "gone.dat").exists()
+    assert read_manifest(folder) == [removed]
+    assert page.state["files"]["state"] == ["online_only"]
+    assert page.state["message"] == "Added placeholders for 0 new objects."
 
 
 def test_update_of_a_folder_of_the_bucket_shows_the_count_listed(folder):
@@ -502,7 +557,7 @@ def test_closing_the_window_answers_no(folder, storage):
 
 def test_download_of_downloaded_files_says_so(folder, storage):
     make_virtual_bucket(folder, "b", manifest=[FileEntry("a.txt", 3, OBJECT_TIME_UTC)])
-    write(folder, "a.txt", b"abc")
+    write_downloaded(folder, "a.txt", b"abc")
     host, page = make_host(folder, storage)
 
     request(host, "download", paths=["a.txt"])
@@ -549,8 +604,8 @@ def test_cancelled_download_keeps_the_files_done_so_far(folder, storage):
 def test_online_only_empties_downloaded_files_and_keeps_local_only_ones(folder, storage):
     manifest = [FileEntry("a.dat", 4, OBJECT_TIME_UTC), FileEntry("b.dat", 2, OBJECT_TIME_UTC)]
     make_virtual_bucket(folder, "b", manifest=manifest)
-    write(folder, "a.dat", b"aaaa")
-    write(folder, "b.dat", b"bb")
+    write_downloaded(folder, "a.dat", b"aaaa")
+    write_downloaded(folder, "b.dat", b"bb")
     write(folder, "mine.txt", b"mine")
     host, page = make_host(folder, storage)
 
@@ -594,6 +649,21 @@ def test_online_only_asks_when_a_file_differs(folder, storage):
     request(host, "onlineOnly", paths=["a.txt"])
 
     assert (folder / "a.txt").read_bytes() == b""
+
+
+def test_online_only_asks_for_a_file_changed_after_its_download(folder, storage):
+    make_virtual_bucket(folder, "b", manifest=[FileEntry("a.txt", 3, OBJECT_TIME_UTC)])
+    write_downloaded(folder, "a.txt", b"abc")
+    # The same size, but later than its object
+    write(folder, "a.txt", b"xyz")
+    host, page = make_host(folder, storage)
+    page.answer = False
+
+    request(host, "onlineOnly", paths=["a.txt"])
+
+    assert page.state["files"]["state"] == ["differs"]
+    assert page.named("confirm")[0]["message"].startswith("1 of the 1 files differ")
+    assert (folder / "a.txt").read_bytes() == b"xyz"
 
 
 def test_online_only_asks_when_the_bucket_was_never_listed(folder, storage):

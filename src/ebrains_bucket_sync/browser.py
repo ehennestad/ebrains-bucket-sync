@@ -45,6 +45,7 @@ from .virtual_bucket import (
     VirtualBucketError,
     file_states,
     is_metadata_path,
+    placeholders_of_removed_objects,
     read_bucket_info,
     read_manifest,
     virtual_bucket_refusal,
@@ -347,10 +348,11 @@ class Host:
         self._send_state()
 
     def _update(self) -> None:
-        """List the bucket, add placeholders for new objects and compare the files.
+        """List the bucket, renew the placeholders and compare the files.
 
-        Objects that the folder has no file for get an empty placeholder.
-        Local files that the bucket does not have are kept.
+        Objects that the folder has no file for get an empty placeholder,
+        and the placeholders of objects that are gone are deleted. Other
+        local files that the bucket does not have are kept.
         """
         bucket = self.bucket.info.bucket
         self._send("busy", {"busy": True})
@@ -370,12 +372,29 @@ class Host:
                 self._alert("Could not list the bucket", str(error) or type(error).__name__)
                 return
 
-            self._progress("update", message="Creating placeholders for new objects...")
+            self._progress("update", message="Updating the placeholders...")
+            # The files may have changed while the bucket was listed
+            self.bucket.scan()
             local_paths = {entry.path for entry in self.bucket.local_files}
             new_paths = [entry.path for entry in entries if entry.path not in local_paths]
             create_placeholders(self.bucket.folder, new_paths)
-            self.bucket.record_listing(entries, listed_at)
-            self._message = f"Added placeholders for {count_text(len(new_paths), 'new object')}."
+            removed = placeholders_of_removed_objects(
+                self.bucket.local_files, entries, self.bucket.manifest
+            )
+            kept = delete_placeholders(self.bucket.folder, [entry.path for entry in removed])
+            # A placeholder that could not be deleted keeps its manifest
+            # entry, so that a push still knows it for a placeholder
+            kept_entries = [entry for entry in removed if entry.path in kept]
+            self.bucket.record_listing(
+                sorted(entries + kept_entries, key=lambda entry: entry.path), listed_at
+            )
+            message = f"Added placeholders for {count_text(len(new_paths), 'new object')}."
+            n_deleted = len(removed) - len(kept_entries)
+            if n_deleted > 0:
+                message += (
+                    f" Deleted the placeholders of {count_text(n_deleted, 'removed object')}."
+                )
+            self._message = message
             self._refresh()
         finally:
             self._close_progress("update")
@@ -690,6 +709,27 @@ def create_placeholders(root: Path, paths: Iterable[str]) -> None:
             continue
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.touch()
+
+
+def delete_placeholders(root: Path, paths: Iterable[str]) -> set[str]:
+    """Delete the empty files of the paths below root, and give the paths of those kept.
+
+    A file that is no longer empty holds data and is left. A placeholder
+    that cannot be deleted is kept and its path given. A path that is
+    no file is skipped.
+    """
+    kept = set()
+    for path in paths:
+        file_path = Path(root) / path
+        try:
+            if file_path.stat().st_size > 0:
+                continue
+            file_path.unlink()
+        except FileNotFoundError:
+            continue
+        except OSError:
+            kept.add(path)
+    return kept
 
 
 def replace_with_placeholders(root: Path, paths: Iterable[str]) -> None:
