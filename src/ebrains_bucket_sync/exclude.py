@@ -47,12 +47,15 @@ class ExcludeFileError(ValueError):
         self.reason = reason
 
 
-def pattern_to_regex(pattern: str, anchored: bool | None = None) -> re.Pattern[str]:
+def pattern_to_regex(
+    pattern: str, anchored: bool | None = None, *, ignore_case: bool = False
+) -> re.Pattern[str]:
     """Regular expression that a path fully matches when the pattern excludes it.
 
     pattern has no leading or trailing "/". anchored says whether it is
     matched from the root, which a "/" inside it implies; a leading "/",
-    which the caller removed, makes it anchored too.
+    which the caller removed, makes it anchored too. ignore_case makes the
+    expression match without regard to case.
     """
     if anchored is None:
         anchored = "/" in pattern
@@ -90,17 +93,25 @@ def pattern_to_regex(pattern: str, anchored: bool | None = None) -> re.Pattern[s
         expression = expression + "(/.*)?"
     else:
         expression = "(.*/)?" + expression + "(/.*)?"
-    return re.compile(expression)
+    return re.compile(expression, re.IGNORECASE if ignore_case else 0)
 
 
-def exclude_files(files: Iterable[FileEntry], patterns: Sequence[str]) -> list[FileEntry]:
-    """The files whose path matches none of the patterns, in the same order."""
+def exclude_files(
+    files: Iterable[FileEntry], patterns: Sequence[str], *, ignore_case: bool = False
+) -> list[FileEntry]:
+    """The files whose path matches none of the patterns, in the same order.
+
+    ignore_case matches the patterns without regard to case, for a folder
+    whose file system ignores the case of names: there a pattern that
+    excludes a local file must also exclude an object whose name differs
+    from it only in case, or the object would be downloaded over the file.
+    """
     expressions = []
     for pattern in patterns:
         trimmed = pattern.strip("/")
         if trimmed:
             anchored = pattern.startswith("/") or "/" in trimmed
-            expressions.append(pattern_to_regex(trimmed, anchored))
+            expressions.append(pattern_to_regex(trimmed, anchored, ignore_case=ignore_case))
 
     return [
         entry

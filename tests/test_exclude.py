@@ -56,6 +56,15 @@ def test_regular_expression_characters_are_literal():
     assert kept == ["a1.txt", "sub/xzy"]
 
 
+def test_ignoring_case_matches_patterns_without_regard_to_case():
+    files = [entry("cache.TMP"), entry("Build/a.o"), entry("keep.txt")]
+
+    kept = exclude_files(files, ["*.tmp", "/build"], ignore_case=True)
+
+    assert [item.path for item in kept] == ["keep.txt"]
+    assert kept_paths(["cache.TMP", "Build/a.o"], ["*.tmp", "/build"]) == ["cache.TMP", "Build/a.o"]
+
+
 def test_double_star_crosses_folders_and_single_star_does_not():
     assert pattern_to_regex("logs/**/*.log").fullmatch("logs/x/y/b.log")
     assert pattern_to_regex("logs/*.log").fullmatch("logs/x/b.log") is None
