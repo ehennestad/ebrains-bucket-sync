@@ -35,8 +35,6 @@ from pathlib import Path
 from typing import Any, Protocol
 from urllib.parse import quote
 
-from platformdirs import user_cache_dir
-
 from .engine import download_object
 from .local import compute_md5, list_local_files
 from .model import BucketStorage, FileEntry, ListingProgressStorage
@@ -71,18 +69,12 @@ COLLABORATORY_BUCKET_URL = "https://wiki.ebrains.eu/bin/view/Collabs/{bucket}/Bu
 d-<uuid>, has one under that name as well as a collab bucket does."""
 
 ENV_PAGE = "EBRAINS_BUCKET_SYNC_BROWSER_PAGE"
-"""Path of the page to show, in place of the one of the toolbox checkout."""
+"""Path of the page to show, in place of the copy in this package."""
 
-# The page lives in the MATLAB toolbox until it moves into this package and
-# is vendored back, so for now it is read from the checkout of the toolbox,
-# on the branch that gives it the pywebview adapter.
-TOOLBOX_CHECKOUT = Path(
-    "/Users/eivind/Code/MATLAB/Neuroscience/Repositories/ehennestad/EBRAINS-MATLAB"
-)
-PAGE_BRANCH = "claude/host-neutral-browser-page-365bd2"
-PAGE_IN_TOOLBOX = "src/ebrains/+ebrains/+bucket/+app/resources/virtualBucketBrowser.html"
-PAGE_HOST_MARKER = "pywebview"
-"""Text that the page has once it knows this host."""
+PAGE_FILE = Path(__file__).parent / "resources" / "virtualBucketBrowser.html"
+"""The page of the browser: a copy of the one of the EBRAINS MATLAB toolbox,
+taken at the commit that resources/browser-page-source.json records (see
+tools/update_browser_page.py)."""
 
 
 class BrowserCancelled(Exception):
@@ -889,54 +881,17 @@ def show_browser(
 
 
 def default_page_path() -> Path:
-    """The page of the browser, from the checkout of the MATLAB toolbox.
+    """The page of the browser: the path in ENV_PAGE if it is set, else PAGE_FILE.
 
-    The path in ENV_PAGE wins. Otherwise the page is taken from a checkout
-    of PAGE_BRANCH among the worktrees of TOOLBOX_CHECKOUT, and failing
-    that read from git into the cache folder of the user. Raises
-    FileNotFoundError when there is no page to show.
+    Raises FileNotFoundError when PAGE_FILE is missing, as it is from an
+    installation that left out the data files of the package.
     """
     from_environment = os.environ.get(ENV_PAGE)
     if from_environment:
         return Path(from_environment)
-
-    for worktree in _worktrees_of(TOOLBOX_CHECKOUT, PAGE_BRANCH):
-        candidate = worktree / PAGE_IN_TOOLBOX
-        if candidate.is_file() and PAGE_HOST_MARKER in candidate.read_text(encoding="utf-8"):
-            return candidate
-
-    shown = subprocess.run(
-        ["git", "-C", str(TOOLBOX_CHECKOUT), "show", f"{PAGE_BRANCH}:{PAGE_IN_TOOLBOX}"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if shown.returncode != 0:
+    if not PAGE_FILE.is_file():
         raise FileNotFoundError(
-            f"The browser page was not found in {TOOLBOX_CHECKOUT} on branch {PAGE_BRANCH}. "
-            f"Give --page, or set {ENV_PAGE}."
+            f"The browser page is missing from the package at {PAGE_FILE}. "
+            f"Reinstall ebrains-bucket-sync, or give --page."
         )
-    cached = Path(user_cache_dir("ebrains-bucket-sync")) / Path(PAGE_IN_TOOLBOX).name
-    cached.parent.mkdir(parents=True, exist_ok=True)
-    cached.write_text(shown.stdout, encoding="utf-8")
-    return cached
-
-
-def _worktrees_of(checkout: Path, branch: str) -> list[Path]:
-    """The worktrees of a git checkout that have the branch checked out."""
-    listed = subprocess.run(
-        ["git", "-C", str(checkout), "worktree", "list", "--porcelain"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if listed.returncode != 0:
-        return []
-    worktrees = []
-    current = None
-    for line in listed.stdout.splitlines():
-        if line.startswith("worktree "):
-            current = Path(line[len("worktree ") :])
-        elif line == f"branch refs/heads/{branch}" and current is not None:
-            worktrees.append(current)
-    return worktrees
+    return PAGE_FILE

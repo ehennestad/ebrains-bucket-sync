@@ -199,8 +199,7 @@ def push(
     "--page",
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
     envvar=ENV_PAGE,
-    help="The virtualBucketBrowser.html page to show. Default: the page of the EBRAINS-MATLAB "
-    "checkout.",
+    help="The virtualBucketBrowser.html page to show. Default: the copy in this package.",
 )
 def browse(folder: Path, bucket: str | None, prefix: str | None, page: Path | None) -> None:
     """Browse the virtual bucket in FOLDER, download files and make them online only.

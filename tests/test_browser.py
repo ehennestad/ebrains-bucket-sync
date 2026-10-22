@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -13,6 +14,7 @@ import pytest
 
 from ebrains_bucket_sync.browser import (
     ENV_PAGE,
+    PAGE_FILE,
     Host,
     VirtualBucket,
     bucket_web_url,
@@ -842,3 +844,32 @@ def test_page_path_comes_from_the_environment_first(monkeypatch, tmp_path):
     monkeypatch.setenv(ENV_PAGE, str(page))
 
     assert default_page_path() == page
+
+
+def test_page_path_is_the_copy_in_the_package(monkeypatch):
+    monkeypatch.delenv(ENV_PAGE, raising=False)
+
+    assert default_page_path() == PAGE_FILE
+
+
+def test_missing_page_copy_is_reported(monkeypatch, tmp_path):
+    monkeypatch.delenv(ENV_PAGE, raising=False)
+    monkeypatch.setattr("ebrains_bucket_sync.browser.PAGE_FILE", tmp_path / "missing.html")
+
+    with pytest.raises(FileNotFoundError, match="give --page"):
+        default_page_path()
+
+
+def test_page_copy_is_the_one_its_source_records():
+    """The copy is the page of the toolbox at the recorded commit, unedited."""
+    source = json.loads((PAGE_FILE.parent / "browser-page-source.json").read_text("utf-8"))
+
+    assert len(source["commit"]) == 40
+    assert hashlib.sha256(PAGE_FILE.read_bytes()).hexdigest() == source["sha256"], (
+        "The page differs from the copy of the toolbox commit it records. "
+        "Run tools/update_browser_page.py instead of editing it."
+    )
+
+
+def test_page_copy_has_the_pywebview_adapter():
+    assert "pywebviewready" in PAGE_FILE.read_text("utf-8")
