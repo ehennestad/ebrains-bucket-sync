@@ -83,7 +83,7 @@ A file is written in full to a temporary file in `.ebrains` and then renamed ove
 
 ### The `.ebrains` folder is not synced
 
-Before exclude patterns are applied, the path `.ebrains` and every path below it are left out of both sides of every sync, whether or not the folder is a virtual bucket. So the folder is never uploaded, downloaded or deleted, and an object named `prefix + ".ebrains/..."` never replaces it.
+Before exclude patterns are applied, the path `.ebrains` and every path below it are left out of both sides of every sync, whether or not the folder is a virtual bucket, with the name matched without regard to case. So the folder is never uploaded, downloaded or deleted, and an object named `prefix + ".ebrains/..."` never replaces it, also as `.EBRAINS/...` on a file system that ignores case.
 
 ### Syncing a virtual bucket
 

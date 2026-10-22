@@ -65,9 +65,12 @@ class BucketInfo:
 def is_metadata_path(path: str) -> bool:
     """Whether a path relative to a synced folder is the .ebrains folder or below it.
 
-    Such paths are left out of both sides of every sync.
+    Such paths are left out of both sides of every sync. Case is ignored,
+    since on a file system that ignores it an object named ".EBRAINS/..."
+    would be written into the .ebrains folder.
     """
-    return path == METADATA_FOLDER or path.startswith(METADATA_FOLDER + "/")
+    folded = path.casefold()
+    return folded == METADATA_FOLDER or folded.startswith(METADATA_FOLDER + "/")
 
 
 def read_bucket_info(root: Path) -> BucketInfo | None:

@@ -81,6 +81,8 @@ def test_manifest_round_trip_leaves_no_temporary_file(tmp_path):
 def test_metadata_paths():
     assert is_metadata_path(".ebrains")
     assert is_metadata_path(".ebrains/manifest.csv")
+    assert is_metadata_path(".EBRAINS/manifest.csv")
+    assert is_metadata_path(".Ebrains")
     assert not is_metadata_path(".ebrainsx/a")
     assert not is_metadata_path("sub/.ebrains/a")
 
