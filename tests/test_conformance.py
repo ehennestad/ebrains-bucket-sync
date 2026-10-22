@@ -11,6 +11,7 @@ from ebrains_bucket_sync.model import FileEntry, PlanItem
 from ebrains_bucket_sync.plan import deletion_refusal, plan_sync
 from ebrains_bucket_sync.remote import parse_listing_time
 from ebrains_bucket_sync.virtual_bucket import (
+    delete_removed_placeholders,
     file_states,
     format_manifest,
     manifest_after_push,
@@ -94,9 +95,12 @@ def test_file_state_fixture(case):
     assert states == [(item["path"], item["state"]) for item in case["expected"]]
 
 
+PLACEHOLDER_RULES = {"to_bucket": protect_placeholders, "from_bucket": delete_removed_placeholders}
+
+
 @pytest.mark.parametrize("case", load_cases("placeholder"))
 def test_placeholder_fixture(case):
-    plan = protect_placeholders(
+    plan = PLACEHOLDER_RULES[case["direction"]](
         [PlanItem(**item) for item in case["plan"]],
         to_entries(case["local"]),
         to_entries(case["listing"]),
@@ -109,7 +113,11 @@ def test_placeholder_fixture(case):
 @pytest.mark.parametrize("case", load_cases("manifest-update"))
 def test_manifest_update_fixture(case):
     manifest = manifest_after_push(
-        to_entries(case["listing"]), to_entries(case["uploaded"]), case["deleted"]
+        to_entries(case["listing"]),
+        to_entries(case["uploaded"]),
+        case["deleted"],
+        local=to_entries(case["local"]),
+        manifest=to_entries(case["manifest"]),
     )
 
     assert manifest == to_entries(case["expected"])

@@ -166,7 +166,9 @@ def file_states(
     "downloaded". With one, a path only the manifest has and a placeholder
     are "online_only", a path only the local folder has is "local_only",
     and any other file is "downloaded" or "differs", by the SizeAndTime
-    comparison with the manifest entry as source.
+    comparison with its manifest entry in both directions. A download gets
+    the time of its object, so a local file later than its object was
+    changed after it was downloaded.
     """
     local_by_path = {entry.path: entry for entry in local}
     if manifest is None:
@@ -187,8 +189,11 @@ def file_states(
         elif is_placeholder(local_entry, manifest_entry):
             state = "online_only"
         else:
-            reason = change_reason(manifest_entry, local_entry, "SizeAndTime", TIME_TOLERANCE)
-            state = "downloaded" if reason == "unchanged" else "differs"
+            is_unchanged = all(
+                change_reason(source, target, "SizeAndTime", TIME_TOLERANCE) == "unchanged"
+                for source, target in ((manifest_entry, local_entry), (local_entry, manifest_entry))
+            )
+            state = "downloaded" if is_unchanged else "differs"
         states.append((path, state))
     return states
 
@@ -221,16 +226,70 @@ def protect_placeholders(
     return protected
 
 
+def placeholders_of_removed_objects(
+    local: Iterable[FileEntry],
+    listing: Iterable[FileEntry],
+    manifest: Iterable[FileEntry] | None,
+) -> list[FileEntry]:
+    """The manifest entries of the placeholders whose object is gone, sorted by path.
+
+    Such a placeholder is an empty local file that the listing does not
+    have, whose manifest entry says its object was not empty.
+    """
+    listed_paths = {entry.path for entry in listing}
+    manifest_by_path = {entry.path: entry for entry in manifest or ()}
+    return sorted(
+        (
+            manifest_by_path[entry.path]
+            for entry in local
+            if entry.path not in listed_paths
+            and entry.path in manifest_by_path
+            and is_placeholder(entry, manifest_by_path[entry.path])
+        ),
+        key=lambda entry: entry.path,
+    )
+
+
+def delete_removed_placeholders(
+    plan: Iterable[PlanItem],
+    local: Iterable[FileEntry],
+    listing: Iterable[FileEntry],
+    manifest: Iterable[FileEntry] | None,
+) -> list[PlanItem]:
+    """The plan of a sync from the bucket, deleting the placeholders whose object is gone.
+
+    The folder stands for the bucket, and such a placeholder holds no
+    data, so it is deleted whether or not the plan deletes extraneous
+    files.
+    """
+    paths = {entry.path for entry in placeholders_of_removed_objects(local, listing, manifest)}
+    return [
+        replace(item, action="delete", reason="placeholder") if item.path in paths else item
+        for item in plan
+    ]
+
+
 def manifest_after_push(
-    listing: Iterable[FileEntry], uploaded: Iterable[FileEntry], deleted: Iterable[str]
+    listing: Iterable[FileEntry],
+    uploaded: Iterable[FileEntry],
+    deleted: Iterable[str],
+    *,
+    local: Iterable[FileEntry],
+    manifest: Iterable[FileEntry] | None,
 ) -> list[FileEntry]:
     """The manifest after a sync to the bucket, sorted by path.
 
     An uploaded file gets the local size and checksum and an unknown time,
     since the time of the new object is only known from a new listing. A
-    deleted object loses its entry.
+    deleted object loses its entry. A placeholder whose object is gone
+    keeps its entry from the manifest before the sync, so that the next
+    sync to the bucket still protects it. local is the local folder at the
+    sync, and manifest the manifest before it.
     """
+    listing = list(listing)
     entries = {entry.path: entry for entry in listing}
+    for entry in placeholders_of_removed_objects(local, listing, manifest):
+        entries[entry.path] = entry
     for entry in uploaded:
         entries[entry.path] = FileEntry(entry.path, entry.bytes, None, entry.hash)
     for path in deleted:

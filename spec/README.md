@@ -91,7 +91,11 @@ When the local folder of a sync has a `bucket.json`, the sync is refused (`Other
 
 A placeholder is a local file of 0 bytes whose object has more than 0 bytes in the listing the sync made, or had in the manifest. In a sync to the bucket, the plan row of a placeholder becomes action `none` with reason `placeholder`, whatever the plan gave: its object is neither replaced by the empty file, nor recreated as an empty object where it was removed since the manifest was made. A virtual bucket that was never listed has no manifest, and the listing alone decides.
 
-After a sync the manifest is the listing the sync made, before exclude patterns, and `listed_at` is the time of that listing. A sync to the bucket then adds the entry of each file it uploaded, with the local `bytes` and `hash` and an unknown `modified_time`, and removes the entry of each object it deleted. A failed transfer leaves the entry as the listing gave it.
+A placeholder of a removed object is a placeholder that the listing the sync made does not have, so only its manifest entry says it stands for an object. In a sync from the bucket, its plan row becomes action `delete` with reason `placeholder`, whether or not `delete` is set: the folder stands for the bucket, and the file holds no data. These rows count as deletions for the refusal rules. An implementation that makes the manifest from a new listing outside a sync, as a browser of the virtual bucket does, deletes these placeholders too. A sync to the bucket leaves them, as above.
+
+A file downloaded into a virtual bucket gets the `modified_time` of its object, so that the file states and a later sync in either direction find it unchanged.
+
+After a sync the manifest is the listing the sync made, before exclude patterns, and `listed_at` is the time of that listing. A sync to the bucket then adds the entry of each file it uploaded, with the local `bytes` and `hash` and an unknown `modified_time`, and removes the entry of each object it deleted. It also keeps the manifest entry of each placeholder of a removed object, so that the next sync to the bucket still knows the file for a placeholder. A failed transfer leaves the entry as the listing gave it.
 
 ### File states
 
@@ -102,7 +106,7 @@ The state of each path of a virtual bucket, sorted by path:
   1. A path only the manifest has: `online_only`.
   2. A path only the local folder has: `local_only`.
   3. A placeholder: `online_only`.
-  4. Otherwise the file is compared as in a plan with the manifest entry as source and the local file as target, by `SizeAndTime`: `downloaded` where the plan gives `unchanged`, and `differs` where it gives `size` or `newer`.
+  4. Otherwise the file is compared with its manifest entry by `SizeAndTime`, in both directions: `differs` where the sizes differ or where either time is later than the other by more than 2 seconds, and `downloaded` otherwise. A local file changed after it was downloaded is later than its object, and its changes exist only there. An unknown time on either side leaves the file `downloaded`, as in a plan.
 
 ## Fixtures
 
@@ -118,9 +122,9 @@ The state of each path of a virtual bucket, sorted by path:
 
 `fixtures/file-state/*.json`: `local` entries, `manifest` entries (null for no manifest), and the `expected` rows of `path` and `state`.
 
-`fixtures/placeholder/*.json`: a `plan` of a sync to the bucket, the `local` entries, the `listing` the sync made and the `manifest` entries (null for no manifest), and the `expected` plan.
+`fixtures/placeholder/*.json`: the `direction` of a sync (`to_bucket` or `from_bucket`), its `plan`, the `local` entries, the `listing` the sync made and the `manifest` entries (null for no manifest), and the `expected` plan.
 
-`fixtures/manifest-update/*.json`: the `listing` of a sync to the bucket, the entries of the files it `uploaded` and the paths it `deleted`, and the `expected` manifest entries.
+`fixtures/manifest-update/*.json`: the `listing` of a sync to the bucket, the entries of the files it `uploaded` and the paths it `deleted`, the `local` entries and the `manifest` entries before the sync (null for no manifest), and the `expected` manifest entries.
 
 ## Plan file
 
