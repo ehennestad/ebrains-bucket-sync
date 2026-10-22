@@ -135,14 +135,15 @@ def sync_to_bucket(
     if other_bucket is not None and not options.dry_run:
         raise SyncRefused(other_bucket.code, other_bucket.reason)
     is_virtual_bucket = bucket_info is not None and other_bucket is None
+    manifest = read_manifest(local_folder) if is_virtual_bucket else None
 
     # 1. List both sides. The listing before exclude patterns becomes the
     # manifest of a virtual bucket.
-    local_files = _without_metadata(list_local_files(local_folder))
+    unexcluded_local_files = _without_metadata(list_local_files(local_folder))
     listed_at = datetime.now(timezone.utc)
     listing = _without_metadata(list_remote_files(storage, bucket, prefix))
     patterns = tuple(options.exclude) + ALWAYS_EXCLUDED
-    local_files = exclude_files(local_files, patterns)
+    local_files = exclude_files(unexcluded_local_files, patterns)
     remote_files = exclude_files(listing, patterns)
 
     _warn_if_remote_times_unknown(local_files, remote_files, options.comparison, bucket, prefix)
@@ -159,7 +160,7 @@ def sync_to_bucket(
         # which were not empty when the placeholders were made, so that a
         # placeholder of an object removed since is not uploaded as a new
         # empty object.
-        plan = protect_placeholders(plan, local_files, listing, read_manifest(local_folder))
+        plan = protect_placeholders(plan, local_files, listing, manifest)
     results = [
         ActionResult(item.path, _ACTION_NAMES[item.action], item.reason, item.bytes)
         for item in plan
@@ -237,7 +238,16 @@ def sync_to_bucket(
             emit(SyncEvent("deleted", result.path, result.bytes, index, total))
 
     if is_virtual_bucket:
-        _update_metadata(local_folder, bucket_info, listed_at, listing, local_files, results)
+        _update_metadata(
+            local_folder,
+            bucket_info,
+            listed_at,
+            listing,
+            unexcluded_local_files,
+            manifest,
+            local_files,
+            results,
+        )
 
     emit(SyncEvent("finished", results=tuple(results)))
     return results
@@ -263,6 +273,8 @@ def _update_metadata(
     info: BucketInfo,
     listed_at: datetime,
     listing: list[FileEntry],
+    unexcluded_local_files: list[FileEntry],
+    manifest: list[FileEntry] | None,
     local_files: list[FileEntry],
     results: list[ActionResult],
 ) -> None:
@@ -270,12 +282,17 @@ def _update_metadata(
 
     The sync changed the bucket after the listing, so the files it uploaded
     and the objects it deleted are applied to the listing. A failed
-    transfer leaves the entry as the listing gave it.
+    transfer leaves the entry as the listing gave it. The placeholders of
+    removed objects keep their entries from the manifest before the sync,
+    an excluded one too, since the manifest is made before exclude patterns.
     """
     uploaded_paths = {r.path for r in results if r.action == "upload" and r.status == "done"}
     deleted_paths = [r.path for r in results if r.action == "delete" and r.status == "done"]
     uploaded = [entry for entry in local_files if entry.path in uploaded_paths]
-    write_manifest(local_folder, manifest_after_push(listing, uploaded, deleted_paths))
+    new_manifest = manifest_after_push(
+        listing, uploaded, deleted_paths, local=unexcluded_local_files, manifest=manifest
+    )
+    write_manifest(local_folder, new_manifest)
     write_bucket_info(local_folder, replace(info, listed_at=listed_at))
 
 

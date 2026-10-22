@@ -137,6 +137,25 @@ def test_placeholder_of_an_object_removed_since_the_manifest_is_not_recreated(fo
     assert storage.uploaded == []
 
 
+def test_placeholder_of_a_removed_object_stays_protected_in_the_next_push(folder, storage):
+    removed = FileEntry("removed.dat", 3, LISTED_AT, md5_of(b"abc"))
+    excluded = FileEntry("excluded.dat", 3, LISTED_AT, md5_of(b"def"))
+    make_virtual_bucket(folder, "b", manifest=[excluded, removed])
+    write(folder, "removed.dat", b"")
+    write(folder, "excluded.dat", b"")
+
+    sync_to_bucket(folder, "b", storage, SyncOptions(exclude=("excluded.dat",)), **NO_WAIT)
+    assert read_manifest(folder) == [excluded, removed]
+
+    results = sync_to_bucket(folder, "b", storage, **NO_WAIT)
+
+    assert statuses(results) == {
+        "excluded.dat": ("none", "placeholder", ""),
+        "removed.dat": ("none", "placeholder", ""),
+    }
+    assert storage.uploaded == []
+
+
 def test_plain_folder_uploads_its_empty_files_and_gets_no_metadata(folder, storage):
     write(folder, "a.dat", b"")
     storage.put("b", "a.dat", b"xyz")
