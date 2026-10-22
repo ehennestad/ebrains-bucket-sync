@@ -58,8 +58,20 @@ def test_regular_expression_characters_are_literal():
 
 def test_double_star_crosses_folders_and_single_star_does_not():
     assert pattern_to_regex("logs/**/*.log").fullmatch("logs/x/y/b.log")
-    assert pattern_to_regex("logs/**/*.log").fullmatch("logs/a.log") is None
     assert pattern_to_regex("logs/*.log").fullmatch("logs/x/b.log") is None
+
+
+def test_double_star_between_slashes_matches_no_folder_too():
+    # As in a .gitignore file. Otherwise "**/cache" would miss the cache
+    # folder at the root, and a sync with deletions would delete it.
+    assert pattern_to_regex("logs/**/*.log").fullmatch("logs/a.log")
+    assert kept_paths(["cache/big.dat", "a/cache/x", "cached/y"], ["**/cache"]) == ["cached/y"]
+    assert kept_paths(["a/b", "a/x/y/b", "a/b2"], ["a/**/b"]) == ["a/b2"]
+    assert kept_paths(["a/x", "a/y/z", "ab/x"], ["a/**"]) == ["ab/x"]
+
+
+def test_leading_slash_anchors_to_the_root():
+    assert kept_paths(["build/a.o", "sub/build/b.o"], ["/build"]) == ["sub/build/b.o"]
 
 
 def test_empty_and_slash_only_patterns_exclude_nothing():

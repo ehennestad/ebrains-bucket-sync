@@ -1,17 +1,23 @@
 """Leave out the files that match exclude patterns.
 
-A pattern is a wildcard pattern:
+A pattern is a wildcard pattern, with the meaning it has in a .gitignore
+file:
     *   matches any characters except "/"
-    **  matches any characters, "/" included
     ?   matches one character except "/"
+    **  between separators matches any number of folders, none included:
+        "**/cache" matches "cache" at the root as well as "a/cache",
+        "a/**/b" matches "a/b" as well as "a/x/y/b", and "a/**" matches
+        everything below "a". Elsewhere "**" matches any characters, "/"
+        included.
 
 A pattern without "/" is matched against every part of a path, so "*.tmp"
 leaves out such files in every folder and ".git" leaves out a folder of
-that name with everything in it. A pattern with "/" is matched against the
-path from the root of the synced folder, and also leaves out what is below
-a folder it matches: "raw/scratch" leaves out "raw/scratch/a.dat". A
-leading or trailing "/" is ignored, so ".git/" and "build/" leave out
-those folders wherever they are, as in a .gitignore file.
+that name with everything in it. A pattern with "/" inside it or in front
+of it is matched against the path from the root of the synced folder, and
+also leaves out what is below a folder it matches: "raw/scratch" leaves out
+"raw/scratch/a.dat", and "/build" leaves out the "build" folder at the root
+but not "sub/build". A trailing "/" is ignored, so ".git/" and "build/"
+leave out those folders wherever they are.
 
 An exclude file holds one pattern per line, in the layout of a .gitignore
 file. Its syntax is a subset of .gitignore: a line that re-includes paths
@@ -41,13 +47,29 @@ class ExcludeFileError(ValueError):
         self.reason = reason
 
 
-def pattern_to_regex(pattern: str) -> re.Pattern[str]:
-    """Regular expression that a path fully matches when the pattern excludes it."""
-    anchored = "/" in pattern
+def pattern_to_regex(pattern: str, anchored: bool | None = None) -> re.Pattern[str]:
+    """Regular expression that a path fully matches when the pattern excludes it.
+
+    pattern has no leading or trailing "/". anchored says whether it is
+    matched from the root, which a "/" inside it implies; a leading "/",
+    which the caller removed, makes it anchored too.
+    """
+    if anchored is None:
+        anchored = "/" in pattern
 
     parts = []
     i = 0
     while i < len(pattern):
+        if pattern.startswith("**/", i) and (i == 0 or pattern[i - 1] == "/"):
+            # "**/" at the start or "/**/" inside: zero or more folders
+            parts.append("(.*/)?")
+            i += 3
+            continue
+        if pattern.startswith("/**", i) and i + 3 == len(pattern):
+            # "/**" at the end: anything below the folder
+            parts.append("(/.*)?")
+            i += 3
+            continue
         if pattern.startswith("**", i):
             parts.append(".*")
             i += 2
@@ -77,7 +99,8 @@ def exclude_files(files: Iterable[FileEntry], patterns: Sequence[str]) -> list[F
     for pattern in patterns:
         trimmed = pattern.strip("/")
         if trimmed:
-            expressions.append(pattern_to_regex(trimmed))
+            anchored = pattern.startswith("/") or "/" in trimmed
+            expressions.append(pattern_to_regex(trimmed, anchored))
 
     return [
         entry
