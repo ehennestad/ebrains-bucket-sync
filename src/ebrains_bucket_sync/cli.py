@@ -6,13 +6,15 @@ import math
 import sys
 import threading
 import warnings
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import click
 
 from .auth import AuthError, DeviceFlowAuthenticator
 from .browser import ENV_PAGE, VirtualBucket, default_page_path, show_browser
-from .engine import SyncEvent, SyncRefused, sync_to_bucket
+from .engine import SyncEvent, SyncRefused, sync_from_bucket, sync_to_bucket
 from .exclude import ExcludeFileError, read_exclude_file
 from .model import COMPARISONS, ActionResult, BucketStorage, SyncOptions, SyncWarning
 from .paths import normalize_prefix
@@ -63,58 +65,86 @@ def logout() -> None:
     click.echo("Logged out.", err=True)
 
 
+def sync_options(direction: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """The options that push (direction "to_bucket") and pull ("from_bucket") share."""
+    is_push = direction == "to_bucket"
+    target_files = "objects" if is_push else "local files"
+    transferred = "uploaded" if is_push else "downloaded"
+    options = [
+        click.option(
+            "--prefix",
+            default="",
+            help=f"Folder of the bucket to sync {'to' if is_push else 'from'}, such as "
+            '"results". Default: the root of the bucket.',
+        ),
+        click.option(
+            "--delete",
+            is_flag=True,
+            help="Also delete the objects that LOCAL_FOLDER does not have."
+            if is_push
+            else "Also delete the local files that the bucket does not have.",
+        ),
+        click.option(
+            "--comparison",
+            type=click.Choice(COMPARISONS),
+            default="SizeAndTime",
+            show_default=True,
+            help=f"How a file {'the bucket' if is_push else 'LOCAL_FOLDER'} has is judged changed.",
+        ),
+        click.option(
+            "--exclude",
+            multiple=True,
+            metavar="PATTERN",
+            help='Wildcard pattern of paths to leave out, such as "*.tmp" or ".git". '
+            "May be repeated.",
+        ),
+        click.option(
+            "--exclude-from",
+            multiple=True,
+            type=click.Path(exists=True, dir_okay=False, path_type=Path),
+            metavar="FILE",
+            help="File of exclude patterns, one per line, in the layout of a .gitignore file. "
+            "May be repeated.",
+        ),
+        click.option(
+            "--dry-run",
+            is_flag=True,
+            help=f"Only show what would be {transferred} and deleted.",
+        ),
+        click.option(
+            "--max-delete",
+            type=click.IntRange(min=0),
+            default=None,
+            help=f"Most {target_files} the sync may delete. More stops it before it changes "
+            "anything.",
+        ),
+        click.option(
+            "--workers",
+            type=click.IntRange(min=1),
+            default=4,
+            show_default=True,
+            help=f"Files {transferred} at the same time.",
+        ),
+        click.option(
+            "--plan-file",
+            type=click.Path(dir_okay=False, path_type=Path),
+            help="Write the plan and the outcome as JSON to this file.",
+        ),
+        click.option("--quiet", is_flag=True, help="Print only failures."),
+    ]
+
+    def decorate(command: Callable[..., Any]) -> Callable[..., Any]:
+        for option in reversed(options):
+            command = option(command)
+        return command
+
+    return decorate
+
+
 @main.command()
 @click.argument("local_folder", type=click.Path(exists=True, file_okay=False, path_type=Path))
 @click.argument("bucket")
-@click.option(
-    "--prefix",
-    default="",
-    help='Folder of the bucket to sync to, such as "results". Default: the root of the bucket.',
-)
-@click.option(
-    "--delete", is_flag=True, help="Also delete the objects that LOCAL_FOLDER does not have."
-)
-@click.option(
-    "--comparison",
-    type=click.Choice(COMPARISONS),
-    default="SizeAndTime",
-    show_default=True,
-    help="How a file the bucket has is judged changed.",
-)
-@click.option(
-    "--exclude",
-    multiple=True,
-    metavar="PATTERN",
-    help='Wildcard pattern of paths to leave out, such as "*.tmp" or ".git". May be repeated.',
-)
-@click.option(
-    "--exclude-from",
-    multiple=True,
-    type=click.Path(exists=True, dir_okay=False, path_type=Path),
-    metavar="FILE",
-    help="File of exclude patterns, one per line, in the layout of a .gitignore file. "
-    "May be repeated.",
-)
-@click.option("--dry-run", is_flag=True, help="Only show what would be uploaded and deleted.")
-@click.option(
-    "--max-delete",
-    type=click.IntRange(min=0),
-    default=None,
-    help="Most objects the sync may delete. More stops it before it changes anything.",
-)
-@click.option(
-    "--workers",
-    type=click.IntRange(min=1),
-    default=4,
-    show_default=True,
-    help="Files uploaded at the same time.",
-)
-@click.option(
-    "--plan-file",
-    type=click.Path(dir_okay=False, path_type=Path),
-    help="Write the plan and the outcome as JSON to this file.",
-)
-@click.option("--quiet", is_flag=True, help="Print only failures.")
+@sync_options("to_bucket")
 def push(
     local_folder: Path,
     bucket: str,
@@ -135,6 +165,76 @@ def push(
     picks up where it stopped when run again. Object names are the paths
     relative to LOCAL_FOLDER.
     """
+    options = SyncOptions(
+        prefix=prefix,
+        delete=delete,
+        comparison=comparison,
+        exclude=tuple(_exclude_patterns(exclude, exclude_from)),
+        dry_run=dry_run,
+        max_delete=math.inf if max_delete is None else max_delete,
+        workers=workers,
+    )
+    printer = ConsolePrinter(local_folder, bucket, options, quiet=quiet)
+    _run_sync(
+        lambda: sync_to_bucket(local_folder, bucket, make_storage(), options, on_event=printer),
+        printer,
+        plan_file,
+        bucket=bucket,
+        local_folder=local_folder,
+        options=options,
+        direction="to_bucket",
+    )
+
+
+@main.command()
+@click.argument("bucket")
+@click.argument("local_folder", type=click.Path(file_okay=False, path_type=Path))
+@sync_options("from_bucket")
+def pull(
+    bucket: str,
+    local_folder: Path,
+    prefix: str,
+    delete: bool,
+    comparison: str,
+    exclude: tuple[str, ...],
+    exclude_from: tuple[Path, ...],
+    dry_run: bool,
+    max_delete: int | None,
+    workers: int,
+    plan_file: Path | None,
+    quiet: bool,
+) -> None:
+    """Make LOCAL_FOLDER match BUCKET, or a folder of it.
+
+    Only new and changed objects are downloaded, so a sync that is
+    interrupted picks up where it stopped when run again. LOCAL_FOLDER is
+    created if it does not exist. Each object is downloaded to a temporary
+    file, which replaces the local file only once it is complete, and the
+    file gets the time of its object.
+    """
+    options = SyncOptions(
+        prefix=prefix,
+        delete=delete,
+        comparison=comparison,
+        exclude=tuple(_exclude_patterns(exclude, exclude_from)),
+        dry_run=dry_run,
+        max_delete=math.inf if max_delete is None else max_delete,
+        workers=workers,
+    )
+    printer = ConsolePrinter(local_folder, bucket, options, quiet=quiet, direction="from_bucket")
+    _run_sync(
+        lambda: sync_from_bucket(bucket, local_folder, make_storage(), options, on_event=printer),
+        printer,
+        plan_file,
+        bucket=bucket,
+        local_folder=local_folder,
+        options=options,
+        direction="from_bucket",
+    )
+
+
+def _exclude_patterns(exclude: tuple[str, ...], exclude_from: tuple[Path, ...]) -> list[str]:
+    """The patterns of --exclude, then those of each --exclude-from file."""
     patterns = list(exclude)
     for exclude_file in exclude_from:
         try:
@@ -144,22 +244,24 @@ def push(
                 f'"{exclude_file}", line {error.line_number} ("{error.line}"): {error.reason}',
                 param_hint="'--exclude-from'",
             ) from error
+    return patterns
 
-    options = SyncOptions(
-        prefix=prefix,
-        delete=delete,
-        comparison=comparison,
-        exclude=tuple(patterns),
-        dry_run=dry_run,
-        max_delete=math.inf if max_delete is None else max_delete,
-        workers=workers,
-    )
-    printer = ConsolePrinter(local_folder, bucket, options, quiet=quiet)
 
+def _run_sync(
+    sync: Callable[[], list[ActionResult]],
+    printer: ConsolePrinter,
+    plan_file: Path | None,
+    *,
+    bucket: str,
+    local_folder: Path,
+    options: SyncOptions,
+    direction: str,
+) -> None:
+    """Run a sync, write its plan file if asked to, and exit with its exit code."""
     refusal = ""
     exit_code = 0
     try:
-        results = sync_to_bucket(local_folder, bucket, make_storage(), options, on_event=printer)
+        results = sync()
     except SyncRefused as error:
         refusal = error.reason
         results = printer.results
@@ -175,7 +277,12 @@ def push(
         write_plan_file(
             plan_file,
             plan_to_dict(
-                results, bucket=bucket, local_folder=local_folder, options=options, refusal=refusal
+                results,
+                bucket=bucket,
+                local_folder=local_folder,
+                options=options,
+                direction=direction,
+                refusal=refusal,
             ),
         )
 
@@ -219,15 +326,26 @@ def browse(folder: Path, bucket: str | None, prefix: str | None, page: Path | No
 
 
 class ConsolePrinter:
-    """Prints the events of a sync, one line per action, as the MATLAB toolbox does."""
+    """Prints the events of a sync, one line per action, as the MATLAB toolbox does.
+
+    direction is "to_bucket" for a push and "from_bucket" for a pull.
+    """
 
     def __init__(
-        self, local_folder: Path, bucket: str, options: SyncOptions, *, quiet: bool = False
+        self,
+        local_folder: Path,
+        bucket: str,
+        options: SyncOptions,
+        *,
+        quiet: bool = False,
+        direction: str = "to_bucket",
     ) -> None:
         self.results: list[ActionResult] = []
         self._local_folder = local_folder
         self._options = options
         self._quiet = quiet
+        self._is_push = direction == "to_bucket"
+        self._copy_action = "upload" if self._is_push else "download"
         self._lock = threading.Lock()
         prefix = normalize_prefix(options.prefix)
         self._where = f'bucket "{bucket}"' + (f', folder "{prefix}"' if prefix else "")
@@ -242,29 +360,43 @@ class ConsolePrinter:
 
     def _on_planned(self, event: SyncEvent) -> None:
         self.results = list(event.results)
-        uploads = [r for r in event.results if r.action == "upload"]
+        copies = [r for r in event.results if r.action == self._copy_action]
         deletions = [r for r in event.results if r.action == "delete"]
         unchanged = sum(1 for r in event.results if r.reason == "unchanged")
         kept = sum(1 for r in event.results if r.reason == "extraneous" and r.action != "delete")
         placeholders = sum(1 for r in event.results if r.reason == "placeholder")
 
-        self._say(f'Syncing "{self._local_folder}" to {self._where}.')
+        if self._is_push:
+            self._say(f'Syncing "{self._local_folder}" to {self._where}.')
+        else:
+            self._say(f'Syncing {self._where} to "{self._local_folder}".')
         self._say(
-            f"{len(uploads)} file(s) to upload ({format_size(sum(r.bytes for r in uploads))}), "
+            f"{len(copies)} file(s) to {self._copy_action} "
+            f"({format_size(sum(r.bytes for r in copies))}), "
             f"{len(deletions)} to delete, {unchanged} unchanged."
         )
-        if kept:
+        if kept and self._is_push:
             self._say(
                 f"{kept} object(s) of the bucket are not in the folder and are kept. "
                 "Use --delete to delete them."
             )
-        if placeholders:
+        elif kept:
+            self._say(
+                f"{kept} local file(s) are not in the bucket and are kept. "
+                "Use --delete to delete them."
+            )
+        if placeholders and self._is_push:
             self._say(
                 f"{placeholders} empty file(s) are placeholders of objects not yet downloaded "
                 "and are left alone."
             )
+        elif placeholders:
+            self._say(
+                f"{placeholders} empty file(s) are placeholders of objects removed from the "
+                "bucket and are deleted."
+            )
         if self._options.dry_run:
-            for result in uploads + deletions:
+            for result in copies + deletions:
                 self._say(
                     f"  [dry-run] {result.action.capitalize()} {result.path} ({result.reason})"
                 )
@@ -282,6 +414,17 @@ class ConsolePrinter:
     def _on_upload_failed(self, event: SyncEvent) -> None:
         click.echo(f"  Failed: {event.path}: {event.message}", err=True)
 
+    def _on_download(self, event: SyncEvent) -> None:
+        self._say(
+            f"[{event.index}/{event.total}] Download {event.path} ({format_size(event.bytes)})"
+        )
+
+    def _on_downloaded(self, event: SyncEvent) -> None:
+        pass
+
+    def _on_download_failed(self, event: SyncEvent) -> None:
+        click.echo(f"  Failed: {event.path}: {event.message}", err=True)
+
     def _on_delete(self, event: SyncEvent) -> None:
         self._say(f"[{event.index}/{event.total}] Delete {event.path}")
 
@@ -292,10 +435,12 @@ class ConsolePrinter:
         click.echo(f"  Failed: {event.path}: {event.message}", err=True)
 
     def _on_finished(self, event: SyncEvent) -> None:
-        uploaded = sum(1 for r in event.results if r.action == "upload" and r.status == "done")
+        copied = sum(
+            1 for r in event.results if r.action == self._copy_action and r.status == "done"
+        )
         deleted = sum(1 for r in event.results if r.action == "delete" and r.status == "done")
         failed = [r for r in event.results if r.status == "failed"]
-        self._say(f"Done: {uploaded} uploaded, {deleted} deleted, {len(failed)} failed.")
+        self._say(f"Done: {copied} {self._copy_action}ed, {deleted} deleted, {len(failed)} failed.")
         if failed:
             click.echo(
                 f"The sync is incomplete: {len(failed)} file(s) failed, for example "

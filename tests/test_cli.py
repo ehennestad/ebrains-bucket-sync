@@ -6,7 +6,13 @@ import pytest
 from click.testing import CliRunner
 
 from ebrains_bucket_sync import cli
-from ebrains_bucket_sync.virtual_bucket import BucketInfo, read_bucket_info, write_bucket_info
+from ebrains_bucket_sync.model import FileEntry
+from ebrains_bucket_sync.virtual_bucket import (
+    BucketInfo,
+    read_bucket_info,
+    write_bucket_info,
+    write_manifest,
+)
 
 from .conftest import FakeStorage, write
 
@@ -241,6 +247,152 @@ def test_push_of_a_virtual_bucket_of_a_newer_format_is_an_error(runner, folder, 
 
     assert result.exit_code == 1
     assert "Error: " in result.output and "format_version 2" in result.output
+    assert fake_storage.listings == []
+
+
+def test_pull_downloads_and_reports(runner, tmp_path, fake_storage):
+    folder = tmp_path / "mirror"
+    fake_storage.put("b", "results/a.txt", b"aaa")
+
+    result = runner.invoke(cli.main, ["pull", "b", str(folder), "--prefix", "results"])
+
+    assert result.exit_code == 0, result.output
+    assert f'Syncing bucket "b", folder "results/" to "{folder}".' in result.output
+    assert "1 file(s) to download (3 B), 0 to delete, 0 unchanged." in result.output
+    assert "[1/1] Download a.txt (3 B)" in result.output
+    assert "Done: 1 downloaded, 0 deleted, 0 failed." in result.output
+    assert (folder / "a.txt").read_bytes() == b"aaa"
+
+
+def test_pull_dry_run_lists_the_plan(runner, folder, fake_storage):
+    write(folder, "extra.txt", b"e")
+    fake_storage.put("b", "a.txt", b"a")
+
+    result = runner.invoke(cli.main, ["pull", "b", str(folder), "--dry-run", "--delete"])
+
+    assert result.exit_code == 0, result.output
+    assert "[dry-run] Download a.txt (new)" in result.output
+    assert "[dry-run] Delete extra.txt (extraneous)" in result.output
+    assert fake_storage.downloaded == []
+    assert sorted(p.name for p in folder.iterdir()) == ["extra.txt"]
+
+
+def test_pull_mentions_kept_local_files(runner, folder, fake_storage):
+    write(folder, "extra.txt", b"e")
+    fake_storage.put("b", "a.txt", b"a")
+
+    result = runner.invoke(cli.main, ["pull", "b", str(folder)])
+
+    assert "1 local file(s) are not in the bucket and are kept. Use --delete" in result.output
+
+
+def test_pull_exits_with_2_when_refused(runner, folder, fake_storage):
+    write(folder, "a.txt", b"a")
+
+    result = runner.invoke(cli.main, ["pull", "b", str(folder), "--delete"])
+
+    assert result.exit_code == 2
+    assert "Stopped before changing anything" in result.output
+    assert (folder / "a.txt").is_file()
+
+
+def test_pull_exits_with_1_when_a_download_failed(runner, folder, fake_storage):
+    fake_storage.put("b", "bad.txt", b"b")
+    fake_storage.errors["bad.txt"] = ValueError("malformed")
+
+    result = runner.invoke(cli.main, ["pull", "b", str(folder)])
+
+    assert result.exit_code == 1
+    assert "Failed: bad.txt: malformed" in result.output
+    assert "The sync is incomplete" in result.output
+
+
+def test_pull_writes_a_plan_file_that_matches_the_schema(runner, folder, fake_storage, tmp_path):
+    write(folder, "extra.txt", b"e")
+    write(folder, "scratch.tmp", b"t")
+    fake_storage.put("b", "a.txt", b"a")
+    exclude_file = tmp_path / "dataset.ignore"
+    exclude_file.write_text("*.tmp\n")
+    plan_file = tmp_path / "plan.json"
+
+    result = runner.invoke(
+        cli.main,
+        [
+            "pull",
+            "b",
+            str(folder),
+            "--delete",
+            "--exclude-from",
+            str(exclude_file),
+            "--max-delete",
+            "5",
+            "--plan-file",
+            str(plan_file),
+            "--quiet",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert result.output == ""
+    plan = json.loads(plan_file.read_text())
+    assert_matches_plan_schema(plan)
+    assert plan["direction"] == "from_bucket"
+    assert plan["policy"] == {
+        "comparison": "SizeAndTime",
+        "delete": True,
+        "exclude": ["*.tmp"],
+        "max_delete": 5,
+    }
+    assert [(a["path"], a["action"], a["status"]) for a in plan["actions"]] == [
+        ("a.txt", "download", "done"),
+        ("extra.txt", "delete", "done"),
+    ]
+    assert sorted(p.name for p in folder.iterdir()) == ["a.txt", "scratch.tmp"]
+
+
+def test_pull_of_a_virtual_bucket_reports_deleted_placeholders(
+    runner, folder, fake_storage, tmp_path
+):
+    write_bucket_info(folder, BucketInfo("b"))
+    write_manifest(folder, [FileEntry("gone.dat", 3), FileEntry("a.txt", 1)])
+    write(folder, "gone.dat", b"")
+    write(folder, "a.txt", b"")
+    fake_storage.put("b", "a.txt", b"a")
+    plan_file = tmp_path / "plan.json"
+
+    result = runner.invoke(cli.main, ["pull", "b", str(folder), "--plan-file", str(plan_file)])
+
+    assert result.exit_code == 0, result.output
+    assert "1 file(s) to download (1 B), 1 to delete, 0 unchanged." in result.output
+    assert (
+        "1 empty file(s) are placeholders of objects removed from the bucket and are deleted."
+        in result.output
+    )
+    plan = json.loads(plan_file.read_text())
+    assert_matches_plan_schema(plan)
+    assert [(a["path"], a["action"], a["reason"], a["status"]) for a in plan["actions"]] == [
+        ("a.txt", "download", "size", "done"),
+        ("gone.dat", "delete", "placeholder", "done"),
+    ]
+
+
+def test_pull_of_a_virtual_bucket_of_another_bucket_exits_with_2(runner, folder, fake_storage):
+    write_bucket_info(folder, BucketInfo("b", "results"))
+
+    result = runner.invoke(cli.main, ["pull", "other", str(folder)])
+
+    assert result.exit_code == 2
+    assert "Stopped before changing anything: The folder is a virtual bucket of" in result.output
+    assert fake_storage.listings == []
+
+
+def test_pull_into_a_file_is_an_error(runner, folder, fake_storage):
+    path = write(folder, "a.txt", b"a")
+
+    result = runner.invoke(cli.main, ["pull", "b", str(path)])
+
+    assert result.exit_code == 2
+    assert "is a file" in result.output
     assert fake_storage.listings == []
 
 

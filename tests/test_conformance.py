@@ -6,11 +6,15 @@ from pathlib import Path
 
 import pytest
 
+from ebrains_bucket_sync import engine
+from ebrains_bucket_sync.engine import sync_from_bucket
 from ebrains_bucket_sync.exclude import ExcludeFileError, exclude_files, parse_exclude_file
-from ebrains_bucket_sync.model import FileEntry, PlanItem
+from ebrains_bucket_sync.local import LocalListing
+from ebrains_bucket_sync.model import FileEntry, PlanItem, SyncOptions
 from ebrains_bucket_sync.plan import deletion_refusal, plan_sync
 from ebrains_bucket_sync.remote import parse_listing_time
 from ebrains_bucket_sync.virtual_bucket import (
+    BucketInfo,
     ManifestError,
     delete_removed_placeholders,
     file_states,
@@ -18,7 +22,11 @@ from ebrains_bucket_sync.virtual_bucket import (
     manifest_after_push,
     parse_manifest,
     protect_placeholders,
+    write_bucket_info,
+    write_manifest,
 )
+
+from .conftest import FakeStorage
 
 FIXTURES = Path(__file__).resolve().parents[1] / "spec" / "fixtures"
 
@@ -128,3 +136,81 @@ def test_manifest_update_fixture(case):
     )
 
     assert manifest == to_entries(case["expected"])
+
+
+# ---------------------------------------------------------------- Through a pull
+#
+# The plan and from_bucket placeholder fixtures run through sync_from_bucket
+# too, with the bucket listing the source (or listing) entries and the local
+# listing giving the target (or local) entries as they are, unknown times
+# included, so the rules are checked where a pull applies them.
+
+PULL_ACTION_NAMES = {"copy": "download", "delete": "delete", "none": "none"}
+
+
+def pull_plan(tmp_path, monkeypatch, objects, local, options, manifest=None):
+    """The plan of a dry-run pull of the objects into a folder that lists local."""
+    storage = FakeStorage()
+    for item in objects:
+        storage.put(
+            "b",
+            item["path"],
+            b"x" * item["bytes"],
+            last_modified=item.get("modified_time"),
+            hash=item.get("hash") or None,
+        )
+    folder = tmp_path / "local"
+    folder.mkdir()
+    if manifest is not None:
+        write_bucket_info(folder, BucketInfo("b"))
+        write_manifest(folder, manifest)
+    local_entries = to_entries(local)
+    monkeypatch.setattr(engine, "scan_local_folder", lambda root: LocalListing(local_entries))
+    hashes = {entry.path: entry.hash for entry in local_entries}
+
+    results = sync_from_bucket(
+        "b",
+        folder,
+        storage,
+        options,
+        md5=lambda path: hashes[path.relative_to(folder).as_posix()],
+        ignore_case=False,
+    )
+    return [(r.path, r.action, r.reason, r.bytes) for r in results]
+
+
+def expected_pull_plan(items):
+    return [
+        (item["path"], PULL_ACTION_NAMES[item["action"]], item["reason"], item["bytes"])
+        for item in items
+    ]
+
+
+# Fixtures without times make the pull warn that the listing has none
+@pytest.mark.filterwarnings("ignore::ebrains_bucket_sync.model.SyncWarning")
+@pytest.mark.parametrize("case", load_cases("plan"))
+def test_plan_fixture_through_a_pull(case, tmp_path, monkeypatch):
+    options = SyncOptions(dry_run=True, **case["policy"])
+
+    plan = pull_plan(tmp_path, monkeypatch, case["source"], case["target"], options)
+
+    assert plan == expected_pull_plan(case["expected"])
+
+
+@pytest.mark.parametrize(
+    "case", [c for c in load_cases("placeholder") if c.values[0]["direction"] == "from_bucket"]
+)
+def test_from_bucket_placeholder_fixture_through_a_pull(case, tmp_path, monkeypatch):
+    # The fixture plan is that of a sync without deletions of extraneous files
+    assert all(item["reason"] != "extraneous" or item["action"] == "none" for item in case["plan"])
+
+    plan = pull_plan(
+        tmp_path,
+        monkeypatch,
+        case["listing"],
+        case["local"],
+        SyncOptions(dry_run=True),
+        manifest=to_entries(case["manifest"]),
+    )
+
+    assert plan == expected_pull_plan(case["expected"])
