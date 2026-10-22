@@ -36,7 +36,7 @@ from typing import Any, Protocol
 from platformdirs import user_cache_dir
 
 from .engine import download_object
-from .local import list_local_files
+from .local import compute_md5, list_local_files
 from .model import BucketStorage, FileEntry, ListingProgressStorage
 from .remote import remote_files_from_objects
 from .text import count_text, format_size
@@ -124,6 +124,9 @@ class VirtualBucket:
         self.manifest = manifest
         self.local_files: list[FileEntry] = []
         self.files: list[FileRow] = []
+        # Checksums of local files by path, size and time, so that a scan
+        # reads a file again only once it changed
+        self._checksums: dict[tuple[str, int, datetime | None], str] = {}
 
     @classmethod
     def open(
@@ -175,7 +178,9 @@ class VirtualBucket:
         local_by_path = {entry.path: entry for entry in self.local_files}
         remote_by_path = {entry.path: entry for entry in self.manifest or ()}
         self.files = []
-        for path, state in file_states(self.local_files, self.manifest):
+        for path, state in file_states(
+            self.local_files, self.manifest, local_hash=self._local_checksum
+        ):
             local_entry = local_by_path.get(path)
             remote_entry = remote_by_path.get(path)
             self.files.append(
@@ -187,6 +192,16 @@ class VirtualBucket:
                     None if local_entry is None else local_entry.modified_time,
                 )
             )
+
+    def _local_checksum(self, entry: FileEntry) -> str:
+        """The MD5 checksum of a local file, or "" if it cannot be read."""
+        key = (entry.path, entry.bytes, entry.modified_time)
+        if key not in self._checksums:
+            try:
+                self._checksums[key] = compute_md5(self.folder / entry.path)
+            except OSError:
+                return ""
+        return self._checksums[key]
 
     def row(self, path: str) -> FileRow | None:
         """The row of a path, or None if the folder and the manifest have no such file."""

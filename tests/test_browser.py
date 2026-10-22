@@ -666,6 +666,28 @@ def test_online_only_asks_for_a_file_changed_after_its_download(folder, storage)
     assert (folder / "a.txt").read_bytes() == b"xyz"
 
 
+def test_checksum_tells_a_pushed_file_from_one_changed_after_its_push(folder, storage):
+    manifest = [
+        FileEntry("pushed.txt", 3, None, md5_of(b"abc")),
+        FileEntry("relisted.txt", 3, utc(2030, 1, 1), md5_of(b"abc")),
+        FileEntry("edited.txt", 3, None, md5_of(b"abc")),
+    ]
+    make_virtual_bucket(folder, "b", manifest=manifest)
+    write(folder, "pushed.txt", b"abc")
+    write(folder, "relisted.txt", b"abc")
+    write(folder, "edited.txt", b"xyz")
+    host, page = make_host(folder, storage)
+    page.answer = False
+
+    assert page.state["files"]["path"] == ["edited.txt", "pushed.txt", "relisted.txt"]
+    assert page.state["files"]["state"] == ["differs", "downloaded", "downloaded"]
+
+    request(host, "onlineOnly", paths=["edited.txt"])
+
+    assert page.named("confirm")[0]["message"].startswith("1 of the 1 files differ")
+    assert (folder / "edited.txt").read_bytes() == b"xyz"
+
+
 def test_online_only_asks_when_the_bucket_was_never_listed(folder, storage):
     make_virtual_bucket(folder, "b")
     write(folder, "a.txt", b"abc")
