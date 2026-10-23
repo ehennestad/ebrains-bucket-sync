@@ -48,12 +48,13 @@ Copies run first. Nothing is deleted after a copy failed, since a failure may me
 
 ## Exclude patterns
 
-Patterns are applied to both sides before planning, so excluded files are neither transferred nor deleted. `*` matches any characters except `/`, and `?` one character except `/`. `**` has the meaning it has in a `.gitignore` file: `**/` at the start and `/**/` inside stand for any number of folders, none included, so `**/data` matches `data` at the root as well as `a/data`, and `logs/**/*.log` matches `logs/a.log`; `/**` at the end matches everything below a folder; elsewhere `**` matches any characters, `/` included. A pattern without `/` matches a path segment at any depth, and a matched folder excludes everything below it. A pattern with `/` inside it or in front of it is matched from the root of the synced folder, and also excludes everything below a matched folder, so `/build` excludes the `build` folder at the root but not `sub/build`. A trailing `/` is ignored.
+Patterns are applied to both sides before planning, so excluded files are neither transferred nor deleted. `*` matches any characters except `/`, and `?` one character except `/`. `**` has the meaning it has in a `.gitignore` file where it is next to a `/`: `**/` at the start and `/**/` inside stand for any number of folders, none included, so `**/data` matches `data` at the root as well as `a/data`, and `logs/**/*.log` matches `logs/a.log`; `/**` at the end matches everything below a folder; elsewhere `**` matches any characters, `/` included. A pattern without `/` matches a path segment at any depth, and a matched folder excludes everything below it. A pattern with `/` inside it or in front of it is matched from the root of the synced folder, and also excludes everything below a matched folder, so `/build` excludes the `build` folder at the root but not `sub/build`. A trailing `/` is ignored.
 
 The patterns look like those of a `.gitignore` file but differ from them in these ways:
 
 - A trailing `/` does not limit a pattern to folders: `build/` also excludes a file named `build`.
 - `[`, `]` and `\` match themselves, so `*.py[co]` matches only a name that ends in `.py[co]`.
+- A `**` that is not next to a `/`, as in `data**.csv`, matches any characters, `/` included, where a `.gitignore` file reads it as `*`.
 - No pattern re-includes paths.
 
 ## Exclude files
