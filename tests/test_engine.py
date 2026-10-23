@@ -116,6 +116,19 @@ def test_leaves_excluded_files_alone_on_both_sides(folder, storage: FakeStorage)
     assert "old.tmp" in storage.buckets["b"]
 
 
+def test_never_syncs_the_part_file_of_an_interrupted_download(folder, storage: FakeStorage):
+    write(folder, "a.dat", b"a")
+    # Left behind by a download that was killed before download_object could remove it
+    write(folder, f"a.dat.k3x9{DOWNLOAD_PART_SUFFIX}", b"partial")
+    storage.put("b", f"old.dat.z1{DOWNLOAD_PART_SUFFIX}", b"p")
+
+    results = sync_to_bucket(folder, "b", storage, SyncOptions(delete=True), **NO_WAIT)
+
+    assert [r.path for r in results] == ["a.dat"]
+    assert storage.uploaded == [("b", "a.dat")]
+    assert storage.deleted == []
+
+
 def test_never_uploads_a_multipart_manifest(folder, storage: FakeStorage):
     write(folder, "big.dat", b"d")
     write(folder, "big.dat.multipart_manifest.json", b"{}")

@@ -59,12 +59,14 @@ from .virtual_bucket import (
     write_manifest,
 )
 
-ALWAYS_EXCLUDED = ("*.multipart_manifest.json",)
-"""The manifest ebrains_drive keeps next to a file while a multipart upload
-is in progress. It is not data, so it is never uploaded."""
-
 DOWNLOAD_PART_SUFFIX = ".sync-part"
 """Suffix of the temporary file an object is received in, next to its target."""
+
+ALWAYS_EXCLUDED = ("*.multipart_manifest.json", "*" + DOWNLOAD_PART_SUFFIX)
+"""Paths left out of both sides of every sync: the manifest ebrains_drive
+keeps next to a file while a multipart upload is in progress, and the file
+a download is received in. Neither holds data of its own, and a process
+killed during a transfer leaves them behind."""
 
 _ACTION_NAMES = {"copy": "upload", "delete": "delete", "none": "none"}
 _SIGNED_QUERY = re.compile(r"\?[^\s'\"()]*?[\w-]*sig[\w-]*=[^\s'\"()]*", re.IGNORECASE)
