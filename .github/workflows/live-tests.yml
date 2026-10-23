@@ -22,9 +22,12 @@ on:
 permissions:
   contents: read
 
+# A second run waits for the first instead of cancelling it: a run cancelled
+# during a test leaves the objects the test made in the bucket, since the
+# teardown that deletes them does not run.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   live-tests:
