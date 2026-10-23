@@ -232,6 +232,32 @@ def test_uploaded_entries_carry_the_checksum_the_comparison_computed(folder, sto
     assert read_manifest(folder) == [FileEntry("edited.txt", 3, None, md5_of(b"abd"))]
 
 
+def test_upload_checksum_is_read_before_the_upload_and_a_vanished_file_fails(folder, storage):
+    make_virtual_bucket(folder, "b")
+    write(folder, "good.txt", b"g")
+    write(folder, "vanished.txt", b"v")
+    read = []
+
+    def md5(path):
+        read.append(path.name)
+        if path.name == "vanished.txt":
+            raise FileNotFoundError(f"No such file: {path}")
+        # Read before the upload, so the checksum is of the content that is sent
+        assert ("b", path.name) not in storage.uploaded
+        return md5_of(path.read_bytes())
+
+    results = sync_to_bucket(folder, "b", storage, md5=md5, **NO_WAIT)
+
+    assert statuses(results) == {
+        "good.txt": ("upload", "new", "done"),
+        "vanished.txt": ("upload", "new", "failed"),
+    }
+    assert "No such file" in results[1].message
+    assert sorted(read) == ["good.txt", "vanished.txt"]
+    assert storage.uploaded == [("b", "good.txt")]
+    assert read_manifest(folder) == [FileEntry("good.txt", 1, None, md5_of(b"g"))]
+
+
 def test_dry_run_of_a_virtual_bucket_writes_nothing(folder, storage):
     make_virtual_bucket(folder, "b")
     write(folder, "placeholder.dat", b"")

@@ -184,13 +184,19 @@ def sync_to_bucket(
     if refusal is not None:
         raise SyncRefused(refusal.code, refusal.reason)
 
-    # 3. Upload
+    # 3. Upload. The manifest of a virtual bucket records the checksum of
+    # each uploaded file, read right before the upload so that it is of the
+    # content that is sent; a file that cannot be read fails its row, as one
+    # that cannot be uploaded does.
+    checksums = {entry.path: entry.hash for entry in local_files if entry.hash}
     total = len(upload_indices)
 
     def upload(index: int, k: int) -> None:
         result = results[k]
         emit(SyncEvent("upload", result.path, result.bytes, index, total))
         try:
+            if is_virtual_bucket and result.path not in checksums:
+                checksums[result.path] = md5(local_folder / result.path)
             _with_attempts(
                 lambda: storage.upload(bucket, prefix + result.path, local_folder / result.path),
                 attempts,
@@ -247,7 +253,7 @@ def sync_to_bucket(
             manifest,
             local_files,
             results,
-            md5,
+            checksums,
         )
 
     emit(SyncEvent("finished", results=tuple(results)))
@@ -278,7 +284,7 @@ def _update_metadata(
     manifest: list[FileEntry] | None,
     local_files: list[FileEntry],
     results: list[ActionResult],
-    md5: Callable[[Path], str],
+    checksums: dict[str, str],
 ) -> None:
     """Record the listing of the sync as the manifest of the virtual bucket.
 
@@ -287,13 +293,14 @@ def _update_metadata(
     transfer leaves the entry as the listing gave it. The placeholders of
     removed objects keep their entries from the manifest before the sync,
     an excluded one too, since the manifest is made before exclude patterns.
+    checksums holds the MD5 checksum of each uploaded file by path, read
+    before its upload: the file states compare an uploaded file by its
+    checksum until a listing gives its object a time.
     """
     uploaded_paths = {r.path for r in results if r.action == "upload" and r.status == "done"}
     deleted_paths = [r.path for r in results if r.action == "delete" and r.status == "done"]
-    # The file states compare an uploaded file by its checksum until a
-    # listing gives its object a time, so each gets one
     uploaded = [
-        replace(entry, hash=entry.hash or md5(local_folder / entry.path))
+        replace(entry, hash=checksums.get(entry.path, ""))
         for entry in local_files
         if entry.path in uploaded_paths
     ]
