@@ -13,7 +13,7 @@ Each side of a sync is a list of file entries:
 | `modified_time` | Time of the last change, in UTC. Unknown where it cannot be read. For an object, the time it was uploaded. |
 | `hash` | Lowercase MD5 checksum. Unknown (`""`) where it is not reported, or where it cannot be the checksum of the content: a multipart upload (`<md5>-<parts>`) or an object above 5 GiB. |
 
-Folder placeholders are not entries: an object whose name ends with `/`, whose content type starts with `application/directory`, or below which other objects are named. An object whose name has an empty, `.` or `..` segment, or a backslash, is left out with a warning.
+Folder placeholders are not entries: an object whose name ends with `/`, whose content type starts with `application/directory`, or below which other objects are named. An object whose name has an empty, `.` or `..` segment, a backslash, or a Windows drive such as `C:` as its first segment, which makes the name absolute on Windows, is left out with a warning.
 
 ## Plan
 

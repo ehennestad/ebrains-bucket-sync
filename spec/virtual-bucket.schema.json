@@ -15,9 +15,9 @@
       "minLength": 1
     },
     "prefix": {
-      "description": "Folder of the bucket that the virtual bucket stands for: \"\" for the whole bucket, or a folder name with a trailing \"/\", no leading \"/\", and no empty, \".\" or \"..\" folder or backslash.",
+      "description": "Folder of the bucket that the virtual bucket stands for: \"\" for the whole bucket, or a folder name with a trailing \"/\", no leading \"/\", no empty, \".\" or \"..\" folder or backslash, and no Windows drive such as \"C:\" as its first folder.",
       "type": "string",
-      "pattern": "^$|^((?!\\.\\.?/)[^/\\\\]+/)+$"
+      "pattern": "^$|^(?![A-Za-z]:)((?!\\.\\.?/)[^/\\\\]+/)+$"
     },
     "listed_at": {
       "description": "When the manifest was last made from a listing, in UTC, or null if it never was.",

@@ -39,8 +39,10 @@ def test_leaves_out_names_that_escape_the_folder(storage: FakeStorage):
     storage.put("b", "../escape.txt", b"a")
     storage.put("b", "sub//double.txt", b"a")
     storage.put("b", "back\\slash.txt", b"a")
+    storage.put("b", "C:/drive.txt", b"a")
+    storage.put("b", "c:relative.txt", b"a")
 
-    with pytest.warns(SyncWarning, match="3 object"):
+    with pytest.warns(SyncWarning, match="5 object"):
         files = list_remote_files(storage, "b", "")
 
     assert [f.path for f in files] == ["ok.txt"]

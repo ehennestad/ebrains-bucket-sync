@@ -96,6 +96,7 @@ def test_newer_format_version_is_refused(tmp_path):
         ({"prefix": "results"}, "prefix 'results'"),
         ({"prefix": "/results/"}, "prefix '/results/'"),
         ({"prefix": "../results/"}, "prefix '../results/'"),
+        ({"prefix": "C:/results/"}, "prefix 'C:/results/'"),
         ({"listed_at": "2024-01-02 03:04:05"}, "listed_at '2024-01-02 03:04:05'"),
         ({"listed_at": "2024-01-02T03:04:05.5Z"}, "listed_at '2024-01-02T03:04:05.5Z'"),
         ({"listed_at": 5}, "listed_at 5"),
