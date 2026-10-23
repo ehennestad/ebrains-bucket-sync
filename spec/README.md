@@ -97,7 +97,7 @@ A placeholder of a removed object is a placeholder that the listing the sync mad
 
 A file downloaded into a virtual bucket gets the `modified_time` of its object, so that the file states and a later sync in either direction find it unchanged.
 
-After a sync the manifest is the listing the sync made, before exclude patterns, and `listed_at` is the time of that listing. A sync to the bucket then adds the entry of each file it uploaded, with the local `bytes`, the MD5 checksum of the uploaded file as `hash` and an unknown `modified_time`, and removes the entry of each object it deleted. It also keeps the manifest entry of each placeholder of a removed object, so that the next sync to the bucket still knows the file for a placeholder. A failed transfer leaves the entry as the listing gave it.
+After a sync the manifest is the listing the sync made, before exclude patterns, and `listed_at` is the time of that listing. A sync to the bucket then adds the entry of each file it uploaded, with the local `bytes`, the MD5 checksum of the uploaded file as `hash` and an unknown `modified_time`, and removes the entry of each object it deleted. It also keeps the manifest entry of each placeholder of a removed object, so that the next sync to the bucket still knows the file for a placeholder. A sync from the bucket keeps the entry of each such placeholder that it did not delete, because the deletions were held back or the deletion failed, as long as the file is still empty. A failed transfer leaves the entry as the listing gave it.
 
 ### File states
 

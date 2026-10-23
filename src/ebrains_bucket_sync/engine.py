@@ -455,7 +455,8 @@ def sync_from_bucket(
     _run_actions(results, delete_indices, "delete", delete, None, emit)
 
     if is_virtual_bucket:
-        write_manifest(local_folder, listing)
+        kept = _undeleted_placeholders(results, local_folder, local_by_path, manifest)
+        write_manifest(local_folder, sorted(listing + kept, key=lambda entry: entry.path))
         write_bucket_info(local_folder, replace(bucket_info, listed_at=listed_at))
 
     emit(SyncEvent("finished", results=tuple(results)))
@@ -618,6 +619,33 @@ def _update_metadata(
     )
     write_manifest(local_folder, new_manifest)
     write_bucket_info(local_folder, replace(info, listed_at=listed_at))
+
+
+def _undeleted_placeholders(
+    results: list[ActionResult],
+    local_folder: Path,
+    local_by_path: dict[str, FileEntry],
+    manifest: list[FileEntry] | None,
+) -> list[FileEntry]:
+    """The manifest entries of the placeholders of removed objects that a pull left in place.
+
+    A placeholder whose deletion was held back or failed still stands for
+    its object, so its entry stays in the manifest, as after a push, and
+    the next push does not upload the empty file as a new object. A file
+    that holds data by now is no placeholder and gets no entry.
+    """
+    manifest_by_path = {entry.path: entry for entry in manifest or ()}
+    kept = []
+    for result in results:
+        if result.reason != "placeholder" or result.status == "done":
+            continue
+        try:
+            is_empty = (local_folder / local_by_path[result.path].path).stat().st_size == 0
+        except OSError:
+            is_empty = False
+        if is_empty:
+            kept.append(manifest_by_path[result.path])
+    return kept
 
 
 def _hold_back_reason(

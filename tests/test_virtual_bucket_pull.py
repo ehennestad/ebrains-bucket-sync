@@ -170,6 +170,35 @@ def test_failed_download_holds_back_the_deletion_of_placeholders(folder, storage
     }
     assert (folder / "a.dat").read_bytes() == b""
     assert (folder / "gone.dat").is_file()
+    # The placeholder keeps its manifest entry, so the next push still
+    # knows it for one instead of uploading an empty object
+    assert read_manifest(folder) == [
+        FileEntry("a.dat", 3, utc(2999, 1, 1), md5_of(b"xyz")),
+        FileEntry("gone.dat", 3, LISTED_AT),
+    ]
+    del storage.errors["a.dat"]
+    pushed = sync_to_bucket(folder, "b", storage, **NO_WAIT)
+    assert statuses(pushed)["gone.dat"] == ("none", "placeholder", "")
+    assert storage.uploaded == []
+
+
+def test_placeholder_that_cannot_be_deleted_keeps_its_manifest_entry(folder, storage, monkeypatch):
+    make_virtual_bucket(folder, "b", manifest=[FileEntry("gone.dat", 3, LISTED_AT)])
+    write(folder, "gone.dat", b"")
+    write(folder, "a.txt", b"a")
+    storage.put("b", "a.txt", b"a", last_modified=FakeStorage.UPLOADED_BEFORE_LOCAL)
+
+    def refuse_unlink(path, *args, **kwargs):
+        raise PermissionError(f"Not permitted: {path}")
+
+    monkeypatch.setattr("pathlib.Path.unlink", refuse_unlink)
+    results = sync_from_bucket("b", folder, storage, **NO_WAIT)
+
+    assert statuses(results)["gone.dat"] == ("delete", "placeholder", "failed")
+    assert read_manifest(folder) == [
+        FileEntry("a.txt", 1, utc(2000, 1, 1), md5_of(b"a")),
+        FileEntry("gone.dat", 3, LISTED_AT),
+    ]
 
 
 def test_placeholder_that_holds_data_by_the_time_of_its_deletion_is_kept(folder, storage):
@@ -187,6 +216,8 @@ def test_placeholder_that_holds_data_by_the_time_of_its_deletion_is_kept(folder,
     assert statuses(results)["gone.dat"] == ("delete", "placeholder", "failed")
     assert "holds data now" in results[1].message
     assert (folder / "gone.dat").read_bytes() == b"new data"
+    # The file is no placeholder any more, so the manifest does not keep its entry
+    assert [entry.path for entry in read_manifest(folder)] == ["a.txt"]
 
 
 def test_pull_of_another_bucket_or_folder_is_refused_before_listing(folder, storage):
