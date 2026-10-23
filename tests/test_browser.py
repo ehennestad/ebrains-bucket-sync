@@ -22,10 +22,12 @@ from ebrains_bucket_sync.browser import (
     format_duration,
     format_local_time,
     open_file_command,
+    replace_with_placeholders,
     reveal_action_name,
     reveal_command,
 )
 from ebrains_bucket_sync.engine import DOWNLOAD_PART_SUFFIX
+from ebrains_bucket_sync.local import local_file_entry
 from ebrains_bucket_sync.model import FileEntry, ListingProgressStorage
 from ebrains_bucket_sync.virtual_bucket import (
     BucketInfo,
@@ -705,6 +707,51 @@ def test_online_only_asks_when_the_bucket_was_never_listed(folder, storage):
         "Replace 1 local files (3 B) with empty placeholders? The bucket has not been listed"
     )
     assert (folder / "a.txt").read_bytes() == b""
+
+
+def test_online_only_reads_a_file_again_before_judging_it(folder, storage):
+    make_virtual_bucket(folder, "b", manifest=[FileEntry("a.txt", 3, OBJECT_TIME_UTC)])
+    write_downloaded(folder, "a.txt", b"abc")
+    host, page = make_host(folder, storage)
+    page.answer = False
+    # Edited in another application after the host scanned the folder, with
+    # the same size, so that only its time tells
+    write(folder, "a.txt", b"xyz")
+
+    request(host, "onlineOnly", paths=["a.txt"])
+
+    assert (folder / "a.txt").read_bytes() == b"xyz"
+    assert page.named("confirm")[0]["message"].startswith("1 of the 1 files differ")
+    assert host.bucket.row("a.txt").state == "differs"
+
+
+def test_download_reads_a_file_again_before_judging_it(folder, storage):
+    make_virtual_bucket(folder, "b", manifest=[FileEntry("a.txt", 3, OBJECT_TIME_UTC)])
+    write_downloaded(folder, "a.txt", b"abc")
+    storage.put("b", "a.txt", b"abc")
+    host, page = make_host(folder, storage)
+    page.answer = False
+    write(folder, "a.txt", b"xyz")
+
+    request(host, "download", paths=["a.txt"])
+
+    assert (folder / "a.txt").read_bytes() == b"xyz"
+    assert page.named("confirm")[0]["title"] == "Replace local copies?"
+    assert storage.downloaded == []
+
+
+def test_replace_with_placeholders_refuses_a_file_that_changed_since_it_was_read(folder):
+    write(folder, "a.txt", b"abc")
+    changed = write(folder, "b.txt", b"xyz")
+    files = [local_file_entry(folder, "a.txt"), local_file_entry(folder, "b.txt")]
+    later = OBJECT_TIME_UTC.timestamp()
+    os.utime(changed, (later, later))
+
+    with pytest.raises(OSError, match="changed since it was read"):
+        replace_with_placeholders(folder, files)
+
+    assert (folder / "a.txt").read_bytes() == b"abc"
+    assert (folder / "b.txt").read_bytes() == b"xyz"
 
 
 # ---------------------------------------------------------------- Open and reveal

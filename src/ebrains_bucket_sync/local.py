@@ -74,18 +74,28 @@ def scan_local_folder(root: str | os.PathLike[str]) -> LocalListing:
             if is_link(Path(folder) / name):
                 linked_folders.append(relative(Path(folder) / name))
         for name in names:
-            full_path = Path(folder) / name
-            try:
-                info = full_path.stat()
-            except OSError:
-                continue  # vanished since the listing
-            if not stat.S_ISREG(info.st_mode):
-                continue
-            modified_time = datetime.fromtimestamp(info.st_mtime, tz=timezone.utc)
-            entries.append(FileEntry(relative(full_path), info.st_size, modified_time))
+            entry = local_file_entry(root, relative(Path(folder) / name))
+            if entry is not None:
+                entries.append(entry)
 
     entries.sort(key=lambda entry: entry.path)
     return LocalListing(entries, sorted(linked_folders), sorted(unreadable_folders))
+
+
+def local_file_entry(root: str | os.PathLike[str], relative_path: str) -> FileEntry | None:
+    """The FileEntry of one file below root, as list_local_files gives it.
+
+    None for a path that is not a regular file or cannot be read: a
+    folder, a link to one, or a file that vanished since it was listed.
+    """
+    try:
+        info = (Path(root) / relative_path).stat()
+    except OSError:
+        return None
+    if not stat.S_ISREG(info.st_mode):
+        return None
+    modified_time = datetime.fromtimestamp(info.st_mtime, tz=timezone.utc)
+    return FileEntry(relative_path, info.st_size, modified_time)
 
 
 def is_case_insensitive(root: str | os.PathLike[str], local_paths: Sequence[str]) -> bool:

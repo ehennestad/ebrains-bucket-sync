@@ -36,7 +36,7 @@ from typing import Any, Protocol
 from urllib.parse import quote
 
 from .engine import download_object
-from .local import compute_md5, list_local_files
+from .local import compute_md5, list_local_files, local_file_entry
 from .model import BucketStorage, FileEntry, ListingProgressStorage
 from .remote import remote_files_from_objects
 from .text import count_text, format_size
@@ -173,6 +173,29 @@ class VirtualBucket:
             for entry in list_local_files(self.folder)
             if not is_metadata_path(entry.path) and entry.path.rsplit("/", 1)[-1] != FINDER_FILE
         ]
+        self._assign_states()
+
+    def rescan(self, paths: Iterable[str]) -> None:
+        """Read the files of the given paths again and give each its state.
+
+        An action that discards local data must judge a file as it is
+        now, not as it was at the last scan: the file may have been edited
+        in another application since. Only the given files are read, since
+        the state of a path rests on its own file and manifest entry alone,
+        and a folder of many files would take long to scan.
+        """
+        local_by_path = {entry.path: entry for entry in self.local_files}
+        for path in set(paths):
+            entry = local_file_entry(self.folder, path)
+            if entry is None:
+                local_by_path.pop(path, None)
+            else:
+                local_by_path[path] = entry
+        self.local_files = sorted(local_by_path.values(), key=lambda entry: entry.path)
+        self._assign_states()
+
+    def _assign_states(self) -> None:
+        """Give each path of the folder or the manifest its row, from local_files."""
         local_by_path = {entry.path: entry for entry in self.local_files}
         remote_by_path = {entry.path: entry for entry in self.manifest or ()}
         self.files = []
@@ -212,6 +235,11 @@ class VirtualBucket:
         """The rows of the given paths, in the order of the files."""
         wanted = set(paths)
         return [row for row in self.files if row.path in wanted]
+
+    def local_entries(self, paths: Iterable[str]) -> list[FileEntry]:
+        """The files of the given paths as they were last read, in the order of the files."""
+        wanted = set(paths)
+        return [entry for entry in self.local_files if entry.path in wanted]
 
     def manifest_entry(self, path: str) -> FileEntry | None:
         """What the last listing said of the object of a path, or None."""
@@ -464,6 +492,8 @@ class Host:
 
     def _download(self, paths: list[str]) -> None:
         """Download the files of the given paths that are online only or differ."""
+        # The files may have been edited since the last scan
+        self.bucket.rescan(paths)
         rows = [row for row in self.bucket.rows(paths) if row.state in ("online_only", "differs")]
         if not rows:
             self._alert(
@@ -555,6 +585,8 @@ class Host:
 
     def _make_online_only(self, paths: list[str]) -> None:
         """Replace the downloaded files of the given paths with placeholders."""
+        # The files may have been edited since the last scan
+        self.bucket.rescan(paths)
         selected = self.bucket.rows(paths)
         n_local_only = sum(1 for row in selected if row.state == "local_only")
         rows = [row for row in selected if row.state in ("downloaded", "differs")]
@@ -592,7 +624,9 @@ class Host:
             return
 
         try:
-            replace_with_placeholders(self.bucket.folder, [row.path for row in rows])
+            replace_with_placeholders(
+                self.bucket.folder, self.bucket.local_entries(row.path for row in rows)
+            )
         except OSError as error:
             self._refresh()
             self._alert("Could not make the files online only", str(error))
@@ -750,22 +784,36 @@ def delete_placeholders(root: Path, paths: Iterable[str]) -> set[str]:
     return kept
 
 
-def replace_with_placeholders(root: Path, paths: Iterable[str]) -> None:
-    """Empty the files of the paths below root, so that they are online only.
+class LocalFileChanged(OSError):
+    """A file changed between the moment it was judged and the moment it was to be emptied."""
 
-    The data of the files is discarded. A path that is not a file is an
-    error, raised before any file is changed.
+
+def replace_with_placeholders(root: Path, files: Iterable[FileEntry]) -> None:
+    """Empty the files below root, so that they are online only.
+
+    files are the entries of the files as they were last read, on which
+    the decision to discard their data rests. The data is discarded only
+    while each file still has the size and the time of its entry: a file
+    that is missing or changed since holds something that was not judged,
+    which is an error, raised before any file is changed.
     """
-    file_paths = [Path(root) / path for path in paths]
-    for file_path in file_paths:
-        if not file_path.is_file():
+    files = list(files)
+    for entry in files:
+        file_path = Path(root) / entry.path
+        current = local_file_entry(root, entry.path)
+        if current is None:
             raise FileNotFoundError(
                 f'The file "{file_path}" does not exist, so no file was made online only.'
             )
-    for file_path in file_paths:
+        if (current.bytes, current.modified_time) != (entry.bytes, entry.modified_time):
+            raise LocalFileChanged(
+                f'The file "{file_path}" changed since it was read, so no file was made online '
+                "only. Refresh and try again."
+            )
+    for entry in files:
         # Opening a file for writing empties it and keeps its name, which
         # is all a placeholder of a virtual bucket is
-        with open(file_path, "wb"):
+        with open(Path(root) / entry.path, "wb"):
             pass
 
 
