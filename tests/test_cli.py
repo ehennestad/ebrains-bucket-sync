@@ -1,4 +1,6 @@
 import json
+import os
+import sys
 from pathlib import Path
 
 import jsonschema
@@ -394,6 +396,25 @@ def test_pull_into_a_file_is_an_error(runner, folder, fake_storage):
     assert result.exit_code == 2
     assert "is a file" in result.output
     assert fake_storage.listings == []
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+    reason="Needs POSIX permissions that apply to the user.",
+)
+def test_pull_into_a_folder_that_cannot_be_created_is_an_error(runner, tmp_path, fake_storage):
+    fake_storage.put("b", "a.txt", b"a")
+    parent = tmp_path / "readonly"
+    parent.mkdir()
+    parent.chmod(0o500)
+    try:
+        result = runner.invoke(cli.main, ["pull", "b", str(parent / "new")])
+    finally:
+        parent.chmod(0o755)
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit), "the error must be reported, not raised"
+    assert "Error: [Errno" in result.output and "Permission denied" in result.output
 
 
 def test_login_and_logout_use_the_authenticator(runner, monkeypatch):

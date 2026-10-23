@@ -267,7 +267,9 @@ def _run_sync(
         results = printer.results
         exit_code = EXIT_REFUSED
         click.echo(f"Stopped before changing anything: {error.reason}", err=True)
-    except (AuthError, VirtualBucketError) as error:
+    except (AuthError, VirtualBucketError, OSError) as error:
+        # An OSError is a local folder that cannot be created or read, or a
+        # lost connection, since the errors of requests are OSErrors too
         raise click.ClickException(str(error)) from error
     else:
         if any(result.status == "failed" for result in results):
