@@ -1,0 +1,73 @@
+name: Live tests
+
+# Runs the live tests of tests/live against the real EBRAINS Data Proxy,
+# authenticated as a service account through the OIDC client credentials
+# flow, once a week and on demand. The "Tests" workflow skips them on every
+# push and pull request: they need a login and a bucket, and the service
+# under test changes rarely enough not to need a run per change. The
+# EBRAINS MATLAB toolbox runs its live tests the same way, as the same
+# service account, so the two suites check the service on the same schedule.
+
+on:
+  schedule:
+    # Mondays, an hour after the run of the MATLAB toolbox. The two suites
+    # work below folders of their own in the bucket and could run at once;
+    # the offset keeps one failure from hiding the other in the service's
+    # logs.
+    - cron: '23 5 * * 1'
+  workflow_dispatch:
+
+# Checking the repository out is all the job needs the token for; the Data
+# Proxy is reached with the token of the service account below.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  live-tests:
+    name: Run live tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --dev
+
+      - name: Get an access token for the service account
+        # The service account is the OIDC client of the EBRAINS MATLAB
+        # toolbox's CI, added as an editor of the test collab. The token is
+        # fetched here rather than by the package, which has no client
+        # credentials flow, and reaches the tests as EBRAINS_BUCKET_SYNC_TOKEN,
+        # which the package uses as it is. A run must finish within the
+        # lifetime of the token, since a token from the environment is not
+        # renewed.
+        env:
+          OIDC_CLIENT_SECRET: ${{ secrets.OIDC_CLIENT_SECRET }}
+        run: |
+          if [ -z "$OIDC_CLIENT_SECRET" ]; then
+            echo "::error::The secret OIDC_CLIENT_SECRET is not set, so the service account cannot log in."
+            exit 1
+          fi
+          token=$(curl --fail --silent --show-error \
+            --data-urlencode grant_type=client_credentials \
+            --data-urlencode client_id=ebrains-services-toolbox-matlab-ci \
+            --data-urlencode "client_secret=$OIDC_CLIENT_SECRET" \
+            https://iam.ebrains.eu/auth/realms/hbp/protocol/openid-connect/token \
+            | python3 -c 'import json, sys; print(json.load(sys.stdin)["access_token"])')
+          echo "::add-mask::$token"
+          echo "EBRAINS_BUCKET_SYNC_TOKEN=$token" >> "$GITHUB_ENV"
+
+      - name: Run the live tests
+        # The bucket is a repository variable, so that the workflow names no
+        # bucket. Without it the tests would be skipped and the run would
+        # pass without testing anything, so the step fails instead.
+        env:
+          EBRAINS_BUCKET_SYNC_TEST_BUCKET: ${{ vars.EBRAINS_BUCKET_SYNC_TEST_BUCKET }}
+        run: |
+          if [ -z "$EBRAINS_BUCKET_SYNC_TEST_BUCKET" ]; then
+            echo "::error::The repository variable EBRAINS_BUCKET_SYNC_TEST_BUCKET names no bucket."
+            exit 1
+          fi
+          uv run pytest tests/live -m live -ra
