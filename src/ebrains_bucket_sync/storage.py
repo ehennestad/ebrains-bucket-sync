@@ -21,12 +21,9 @@ from ebrains_drive.exceptions import ClientHttpError, TokenExpired, Unauthorized
 from ebrains_drive.utils import EBRAINS_DRIVE_MULTIPART_THRESHOLD
 
 from .model import DownloadProgress, RemoteObject
+from .paths import MULTIPART_MANIFEST_SUFFIX
 
 _T = TypeVar("_T")
-
-MULTIPART_MANIFEST_SUFFIX = ".multipart_manifest.json"
-"""ebrains_drive keeps the progress of a multipart upload of a file in a
-file of this name next to it, and resumes from it."""
 
 LISTING_PROGRESS_STEP = 1000
 """Objects between two progress reports of a listing. The time of a listing

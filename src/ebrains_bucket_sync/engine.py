@@ -18,7 +18,8 @@ the sync must be of its bucket and prefix, a sync to the bucket leaves its
 placeholders alone, a sync from the bucket deletes the placeholders of
 removed objects, and its manifest is updated from the listing the sync
 made. The .ebrains folder that describes it is left out of both sides of
-every sync.
+every sync, and so are the files of interrupted transfers (see
+never_synced).
 """
 
 from __future__ import annotations
@@ -33,7 +34,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TypeVar
+from typing import Any, TypeVar
 
 from .exclude import exclude_files
 from .local import (
@@ -41,7 +42,7 @@ from .local import (
     compute_md5,
     is_case_insensitive,
     is_link,
-    list_local_files,
+    local_file_entry,
     scan_local_folder,
 )
 from .model import (
@@ -52,7 +53,7 @@ from .model import (
     SyncOptions,
     SyncWarning,
 )
-from .paths import normalize_prefix
+from .paths import DOWNLOAD_PART_SUFFIX, is_transfer_leftover, normalize_prefix
 from .plan import deletion_refusal, match_key, plan_sync
 from .remote import list_remote_files
 from .storage import is_transient_error
@@ -70,20 +71,26 @@ from .virtual_bucket import (
     write_manifest,
 )
 
-DOWNLOAD_PART_SUFFIX = ".sync-part"
-"""Suffix of the temporary file an object is received in, next to its target."""
-
-ALWAYS_EXCLUDED = ("*.multipart_manifest.json", "*" + DOWNLOAD_PART_SUFFIX)
-"""Paths left out of both sides of every sync: the manifest ebrains_drive
-keeps next to a file while a multipart upload is in progress, and the file
-a download is received in. Neither holds data of its own, and a process
-killed during a transfer leaves them behind."""
-
 _ACTION_NAMES = {"copy": "upload", "delete": "delete", "none": "none"}
 _DOWNLOAD_ACTION_NAMES = {"copy": "download", "delete": "delete", "none": "none"}
 _SIGNED_QUERY = re.compile(r"\?[^\s'\"()]*?[\w-]*sig[\w-]*=[^\s'\"()]*", re.IGNORECASE)
 """The query string of a URL with a signature parameter, such as X-Amz-Signature."""
 _T = TypeVar("_T")
+_UNCHECKED: Any = object()
+"""Default of the judged_file argument of download_object: no check."""
+
+
+def never_synced(path: str) -> bool:
+    """Whether a path is left out of both sides of every sync, before the exclude patterns.
+
+    These are the .ebrains folder and every path below it, which describe
+    a virtual bucket (virtual_bucket.is_metadata_path), and the files of
+    interrupted transfers (paths.is_transfer_leftover). Such a path is
+    never uploaded, downloaded or deleted, is never recorded in the
+    manifest of a virtual bucket, and is not shown by the virtual bucket
+    browser.
+    """
+    return is_metadata_path(path) or is_transfer_leftover(path)
 
 
 class SyncRefused(Exception):
@@ -101,6 +108,10 @@ class SizeMismatchError(Exception):
 
 class LocalPathError(Exception):
     """A sync from the bucket left a local path as it is: replacing or deleting it was unsafe."""
+
+
+class LocalFileChanged(OSError):
+    """A file changed between the moment it was judged and the moment it was to be replaced."""
 
 
 @dataclass(frozen=True)
@@ -158,6 +169,12 @@ def sync_to_bucket(
     (code "OtherBucket"), and VirtualBucketError when its .ebrains folder
     is of a format this version does not know.
 
+    A linked or unreadable local folder holds back all deletions, as a
+    failed upload does: its files are missing from the listing, so the plan
+    would take their objects for extraneous. Raises NotADirectoryError
+    when local_folder is not a folder and PermissionError when it cannot
+    be read.
+
     A failed upload is tried again up to `attempts` times in all when the
     error looks transient, waiting retry_wait seconds, doubled each time.
     """
@@ -178,12 +195,19 @@ def sync_to_bucket(
 
     # 1. List both sides. The listing before exclude patterns becomes the
     # manifest of a virtual bucket.
-    unexcluded_local_files = _without_metadata(list_local_files(local_folder))
+    local_listing = scan_local_folder(local_folder)
+    if "" in local_listing.unreadable_folders:
+        raise PermissionError(
+            f"The folder {str(local_folder)!r} could not be read. "
+            "Check that you have permission to read it."
+        )
+    unexcluded_local_files = _synced_files(local_listing.files)
     listed_at = datetime.now(timezone.utc)
-    listing = _without_metadata(list_remote_files(storage, bucket, prefix))
-    patterns = tuple(options.exclude) + ALWAYS_EXCLUDED
+    listing = _synced_files(list_remote_files(storage, bucket, prefix))
+    patterns = tuple(options.exclude)
     local_files = exclude_files(unexcluded_local_files, patterns)
     remote_files = exclude_files(listing, patterns)
+    hold_back = _hold_back_reason(local_listing, patterns, False, local_folder)
 
     _warn_if_remote_times_unknown(local_files, remote_files, options.comparison, bucket, prefix)
 
@@ -213,7 +237,7 @@ def sync_to_bucket(
         # deletion refusal is reported on the deletions; OtherBucket stops
         # the uploads as well.
         _mark_dry_run(results, upload_indices, other_bucket.reason if other_bucket else "")
-        _mark_dry_run(results, delete_indices, refusal.reason if refusal else "")
+        _mark_dry_run(results, delete_indices, refusal.reason if refusal else hold_back)
         emit(
             SyncEvent("planned", results=tuple(results), message=refusal.reason if refusal else "")
         )
@@ -244,8 +268,10 @@ def sync_to_bucket(
     # 4. Delete. A failed upload may mean the folder was listed wrongly or
     # the connection is lost, so nothing is deleted after one, the way
     # rsync and rclone hold back deletions after an error.
-    if any(result.status == "failed" for result in results):
-        _hold_back(results, delete_indices, "Not deleted, since a file failed to upload.")
+    if not hold_back and any(result.status == "failed" for result in results):
+        hold_back = "Not deleted, since a file failed to upload."
+    if hold_back:
+        _hold_back(results, delete_indices, hold_back)
         delete_indices = []
 
     _run_actions(
@@ -345,9 +371,9 @@ def sync_from_bucket(
             f"The folder {str(local_folder)!r} could not be read. "
             "Check that you have permission to read it."
         )
-    unexcluded_local_files = _without_metadata(local_listing.files)
+    unexcluded_local_files = _synced_files(local_listing.files)
     listed_at = datetime.now(timezone.utc)
-    listing = _without_metadata(list_remote_files(storage, bucket, prefix))
+    listing = _synced_files(list_remote_files(storage, bucket, prefix))
 
     # On a file system that ignores case, a local file and an object whose
     # names differ only in case are one file, so they are matched as one,
@@ -358,7 +384,7 @@ def sync_from_bucket(
             local_folder, [entry.path for entry in local_listing.files]
         )
     key = match_key(ignore_case)
-    patterns = tuple(options.exclude) + ALWAYS_EXCLUDED
+    patterns = tuple(options.exclude)
     local_files = exclude_files(unexcluded_local_files, patterns, ignore_case=ignore_case)
     remote_files = exclude_files(listing, patterns, ignore_case=ignore_case)
     hold_back = _hold_back_reason(local_listing, patterns, ignore_case, local_folder)
@@ -472,14 +498,16 @@ def download_object(
     expected_bytes: int | None = None,
     modified_time: datetime | None = None,
     on_progress: DownloadProgress | None = None,
+    judged_file: FileEntry | None = _UNCHECKED,
 ) -> None:
     """Download an object into target, replacing it only once the download is complete.
 
-    The object is received in a temporary file next to the target, so
-    that the replacement is a rename on the same file system and a failed
-    download leaves the target as it was: the empty placeholder of a
-    virtual bucket, or an older copy. The folder of the target is created
-    if needed.
+    The object is received in a temporary file next to the target, named
+    with DOWNLOAD_PART_SUFFIX so that every sync leaves it out, so that the
+    replacement is a rename on the same file system and a failed download
+    leaves the target as it was: the empty placeholder of a virtual
+    bucket, or an older copy. The folder of the target is created if
+    needed.
 
     expected_bytes is the size the listing reports for the object. A
     download of another size raises SizeMismatchError and leaves the
@@ -489,6 +517,13 @@ def download_object(
     time comparison of a later sync in either direction, where one with
     the time of the download would be newer than its object and be
     uploaded again. on_progress is passed to the storage.
+
+    judged_file is the entry of the file at target as it was read when the
+    download was decided, or None when there was no file. Right before the
+    download is put in place, the file must still have the size and time
+    of that entry, or still be missing; otherwise the download is
+    discarded with LocalFileChanged, since the file holds data that was
+    not judged. Left out, the file is not checked.
     """
     target = Path(target)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -508,9 +543,27 @@ def download_object(
         if modified_time is not None:
             seconds = modified_time.timestamp()
             os.utime(temporary, (seconds, seconds))
+        if judged_file is not _UNCHECKED and not _is_as_judged(target, judged_file):
+            raise LocalFileChanged(
+                f'The file "{target}" changed while the object was downloaded, so the '
+                "download was discarded. Refresh and try again."
+            )
         os.replace(temporary, target)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def _is_as_judged(target: Path, judged_file: FileEntry | None) -> bool:
+    """Whether the file at target still has the size and time of its entry, or is still missing."""
+    current = local_file_entry(target.parent, target.name)
+    if current is None or judged_file is None:
+        return current is None and judged_file is None
+    return (current.bytes, current.modified_time) == (judged_file.bytes, judged_file.modified_time)
+
+
+def _synced_files(files: list[FileEntry]) -> list[FileEntry]:
+    """The files a sync may touch: those outside .ebrains that are not leftovers of a transfer."""
+    return [entry for entry in files if not never_synced(entry.path)]
 
 
 def _without_metadata(files: list[FileEntry]) -> list[FileEntry]:

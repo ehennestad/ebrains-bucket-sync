@@ -29,6 +29,7 @@ from ebrains_bucket_sync.browser import (
 from ebrains_bucket_sync.engine import DOWNLOAD_PART_SUFFIX
 from ebrains_bucket_sync.local import local_file_entry
 from ebrains_bucket_sync.model import FileEntry, ListingProgressStorage
+from ebrains_bucket_sync.paths import InvalidPrefixError
 from ebrains_bucket_sync.virtual_bucket import (
     BucketInfo,
     VirtualBucketError,
@@ -169,6 +170,47 @@ def test_folder_is_registered_without_a_listing(tmp_path):
     assert virtual_bucket.folder == folder.resolve()
     assert not virtual_bucket.is_listed
     assert virtual_bucket.files == []
+
+
+def test_prefix_that_does_not_name_a_folder_is_refused_before_the_folder_is_made(tmp_path):
+    with pytest.raises(InvalidPrefixError, match="does not name a folder of the bucket"):
+        VirtualBucket.open(tmp_path / "new", "b", "../set")
+
+    assert not (tmp_path / "new").exists()
+
+
+def test_files_no_sync_touches_are_not_shown(folder, storage):
+    # The manifest may come from a tool that recorded such an object
+    make_virtual_bucket(
+        folder,
+        "b",
+        manifest=[
+            FileEntry("a.dat", 3, OBJECT_TIME_UTC),
+            FileEntry(f"old.dat.z1{DOWNLOAD_PART_SUFFIX}", 1, OBJECT_TIME_UTC),
+        ],
+    )
+    write(folder, "a.dat", b"")
+    write(folder, f"a.dat.k3x9{DOWNLOAD_PART_SUFFIX}", b"partial")
+    write(folder, "big.dat.multipart_manifest.json", b"{}")
+    write(folder, ".DS_Store", b"")
+
+    host, page = make_host(folder, storage)
+
+    assert page.state["files"]["path"] == ["a.dat"]
+
+
+def test_update_leaves_out_the_leftovers_of_transfers(folder, storage):
+    make_virtual_bucket(folder, "b")
+    storage.put("b", "a.dat", b"xyz")
+    storage.put("b", f"old.dat.z1{DOWNLOAD_PART_SUFFIX}", b"p")
+    storage.put("b", "big.dat.multipart_manifest.json", b"{}")
+    host, page = make_host(folder, storage)
+
+    request(host, "update")
+
+    assert sorted(path.name for path in folder.iterdir()) == [".ebrains", "a.dat"]
+    assert [entry.path for entry in read_manifest(folder)] == ["a.dat"]
+    assert page.state["files"]["path"] == ["a.dat"]
 
 
 def test_folder_of_another_bucket_is_refused(folder):
@@ -738,6 +780,28 @@ def test_download_reads_a_file_again_before_judging_it(folder, storage):
     assert (folder / "a.txt").read_bytes() == b"xyz"
     assert page.named("confirm")[0]["title"] == "Replace local copies?"
     assert storage.downloaded == []
+
+
+def test_download_discards_the_download_of_a_file_edited_meanwhile(folder):
+    class EditingStorage(FakeStorage):
+        """A storage whose download finds the file edited in another application."""
+
+        def download(self, bucket, object_name, local_path, *, on_progress=None):
+            write(folder, "a.txt", b"edited by hand")
+            super().download(bucket, object_name, local_path, on_progress=on_progress)
+
+    storage = EditingStorage()
+    make_virtual_bucket(folder, "b", manifest=[FileEntry("a.txt", 3, OBJECT_TIME_UTC)])
+    write(folder, "a.txt", b"")
+    storage.put("b", "a.txt", b"xyz")
+    host, page = make_host(folder, storage)
+
+    request(host, "download", paths=["a.txt"])
+
+    assert (folder / "a.txt").read_bytes() == b"edited by hand"
+    assert page.alerts == [("Download stopped", "error")]
+    assert "changed while the object was downloaded" in page.named("alert")[0]["message"]
+    assert host.bucket.row("a.txt").state == "differs"
 
 
 def test_replace_with_placeholders_refuses_a_file_that_changed_since_it_was_read(folder):

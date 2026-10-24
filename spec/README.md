@@ -67,7 +67,7 @@ A virtual bucket is a local folder that stands for a bucket, or for a folder of 
 
 ### Paths
 
-A virtual bucket is laid out as a sync folder with the same prefix: a path is relative to the root, with `/` separators, and names the object `prefix + path`. The prefix is `""` for the whole bucket, or a folder name with a trailing `/` and no leading `/`; `results`, `/results` and `results/` are all the prefix `results/`.
+A virtual bucket is laid out as a sync folder with the same prefix: a path is relative to the root, with `/` separators, and names the object `prefix + path`. The prefix is `""` for the whole bucket, or a folder name with a trailing `/` and no leading `/`; `results`, `/results` and `results/` are all the prefix `results/`. A prefix whose folder name is not a safe relative path, as [File entries](#file-entries) defines it, such as `../results` or `C:/results`, is refused before anything is listed or written, by a sync as well: it could not be recorded in `bucket.json`.
 
 ### The `.ebrains` folder
 
@@ -86,6 +86,10 @@ A file is written in full to a temporary file in `.ebrains` and then renamed ove
 ### The `.ebrains` folder is not synced
 
 Before exclude patterns are applied, the path `.ebrains` and every path below it are left out of both sides of every sync, whether or not the folder is a virtual bucket, with the name matched without regard to case. So the folder is never uploaded, downloaded or deleted, and an object named `prefix + ".ebrains/..."` never replaces it, also as `.EBRAINS/...` on a file system that ignores case.
+
+### The files of interrupted transfers are not synced
+
+Before exclude patterns are applied, a path that ends in `.sync-part` or `.multipart_manifest.json` is left out of both sides of every sync, as `.ebrains` is. `<name>.<random>.sync-part` is the file an implementation receives a download in, next to its target, and renames over the target once the download is complete. `<name>.multipart_manifest.json` is the manifest the uploader of the Python package keeps next to a file during a multipart upload. Neither holds data of its own, and a process killed during the transfer leaves it behind. The suffixes are matched as written, in lowercase, on the path itself rather than on its folders: `report.sync-part` is left out even where a user named it so, while `Report.SYNC-PART` and `a.sync-part/b.txt` are synced. Such a path is never uploaded, downloaded or deleted, the manifest of a virtual bucket, made from a listing, does not record it, and a browser of a virtual bucket does not show it, nor an entry of it in a manifest written before this rule.
 
 ### Syncing a virtual bucket
 
@@ -131,6 +135,8 @@ The state of each path of a virtual bucket, sorted by path:
 `fixtures/placeholder/*.json`: the `direction` of a sync (`to_bucket` or `from_bucket`), its `plan`, the `local` entries, the `listing` the sync made and the `manifest` entries (null for no manifest), and the `expected` plan.
 
 `fixtures/manifest-update/*.json`: the `listing` of a sync to the bucket, the entries of the files it `uploaded` and the paths it `deleted`, the `local` entries and the `manifest` entries before the sync (null for no manifest), and the `expected` manifest entries.
+
+`fixtures/never-synced/*.json`: `paths`, and the `expected_kept` paths that a sync may touch, in order: those outside `.ebrains` that are not the files of interrupted transfers.
 
 ## Plan file
 

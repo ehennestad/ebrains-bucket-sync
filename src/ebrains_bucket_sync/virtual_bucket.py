@@ -207,6 +207,16 @@ def parse_manifest(text: str) -> list[FileEntry]:
     of spec/README.md: a row is refused rather than skipped, since a
     missing entry could let a placeholder replace its object.
     """
+    # The csv module reads a double quote inside an unquoted field as text
+    # and a lone CR as a line end, both of which the layout refuses. A rule
+    # broken on an earlier row is reported first, as the MATLAB toolbox does.
+    syntax_error = _csv_syntax_error(text)
+    if syntax_error is not None:
+        line_number, problem, row_start = syntax_error
+        if row_start > 0:
+            parse_manifest(text[:row_start])
+        raise ManifestError(line_number, f"it is not a row of CSV text ({problem})")
+
     reader = csv.reader(io.StringIO(text, newline=""), strict=True)
     entries = []
     paths = set()
@@ -229,6 +239,50 @@ def parse_manifest(text: str) -> list[FileEntry]:
     except csv.Error as error:
         raise ManifestError(line_number, f"it is not a row of CSV text ({error})") from error
     return entries
+
+
+def _csv_syntax_error(text: str) -> tuple[int, str, int] | None:
+    """Where text stops being CSV in a way the csv module lets pass, or None.
+
+    Gives the line the offending row starts on, counted from 1, what is
+    wrong, and the offset of the start of that row in text. A double quote
+    may only open a field or be doubled inside a quoted one, and a CR is a
+    line end only in front of an LF; inside a quoted field anything goes.
+    """
+    line = row_line = 1
+    row_start = 0
+    at_field_start = True
+    in_quotes = False
+    position = 0
+    while position < len(text):
+        char = text[position]
+        if in_quotes:
+            if text.startswith('""', position):
+                position += 2
+                continue
+            if char == '"':
+                in_quotes = False
+            elif char == "\n":
+                line += 1
+        elif char == '"':
+            if not at_field_start:
+                return row_line, "a double quote inside an unquoted field", row_start
+            in_quotes = True
+            at_field_start = False
+        elif char == ",":
+            at_field_start = True
+        elif char == "\n":
+            line += 1
+            row_line = line
+            row_start = position + 1
+            at_field_start = True
+        elif char == "\r":
+            if not text.startswith("\r\n", position):
+                return row_line, "a lone carriage return", row_start
+        else:
+            at_field_start = False
+        position += 1
+    return None
 
 
 def _manifest_entry(row: list[str], line_number: int) -> FileEntry:

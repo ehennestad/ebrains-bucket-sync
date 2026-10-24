@@ -17,7 +17,7 @@ from .browser import ENV_PAGE, VirtualBucket, default_page_path, show_browser
 from .engine import SyncEvent, SyncRefused, sync_from_bucket, sync_to_bucket
 from .exclude import ExcludeFileError, read_exclude_file
 from .model import COMPARISONS, ActionResult, BucketStorage, SyncOptions, SyncWarning
-from .paths import normalize_prefix
+from .paths import InvalidPrefixError, normalize_prefix
 from .planfile import plan_to_dict, write_plan_file
 from .storage import EbrainsDriveStorage
 from .text import format_size
@@ -65,6 +65,18 @@ def logout() -> None:
     click.echo("Logged out.", err=True)
 
 
+def _checked_prefix(
+    context: click.Context, parameter: click.Parameter, value: str | None
+) -> str | None:
+    """Refuse a --prefix that does not name a folder of the bucket, before anything is done."""
+    if value is not None:
+        try:
+            normalize_prefix(value)
+        except InvalidPrefixError as error:
+            raise click.BadParameter(str(error)) from error
+    return value
+
+
 def sync_options(direction: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """The options that push (direction "to_bucket") and pull ("from_bucket") share."""
     is_push = direction == "to_bucket"
@@ -74,6 +86,7 @@ def sync_options(direction: str) -> Callable[[Callable[..., Any]], Callable[...,
         click.option(
             "--prefix",
             default="",
+            callback=_checked_prefix,
             help=f"Folder of the bucket to sync {'to' if is_push else 'from'}, such as "
             '"results". Default: the root of the bucket.',
         ),
@@ -301,6 +314,7 @@ def _run_sync(
 @click.option(
     "--prefix",
     default=None,
+    callback=_checked_prefix,
     help='Folder of the bucket that the virtual bucket holds, such as "results". Default: the '
     "folder of the virtual bucket, or the whole bucket for a folder that is not one yet.",
 )

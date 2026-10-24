@@ -6,6 +6,7 @@ import pytest
 
 from ebrains_bucket_sync.engine import SyncRefused, sync_to_bucket
 from ebrains_bucket_sync.model import FileEntry, SyncOptions
+from ebrains_bucket_sync.paths import DOWNLOAD_PART_SUFFIX
 from ebrains_bucket_sync.virtual_bucket import (
     BucketInfo,
     read_bucket_info,
@@ -51,6 +52,19 @@ def test_metadata_folder_is_left_out_of_both_sides_of_any_sync(folder, storage: 
     assert storage.uploaded == [("b", "results/a.txt")]
     assert storage.deleted == []
     assert metadata_files(folder) == ["notes.txt"]
+
+
+def test_manifest_does_not_record_the_leftovers_of_transfers(folder, storage: FakeStorage):
+    make_virtual_bucket(folder, "b")
+    write(folder, "a.dat", b"a")
+    write(folder, f"a.dat.k3x9{DOWNLOAD_PART_SUFFIX}", b"partial")
+    storage.put("b", f"old.dat.z1{DOWNLOAD_PART_SUFFIX}", b"p")
+    storage.put("b", "big.bin.multipart_manifest.json", b"{}")
+
+    results = sync_to_bucket(folder, "b", storage, **NO_WAIT)
+
+    assert statuses(results) == {"a.dat": ("upload", "new", "done")}
+    assert [entry.path for entry in read_manifest(folder)] == ["a.dat"]
 
 
 def test_sync_of_another_bucket_or_folder_is_refused_before_listing(folder, storage: FakeStorage):
