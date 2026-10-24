@@ -76,4 +76,4 @@ uv sync --dev
 uv run pytest
 ```
 
-The live tests in `tests/live` run against a real bucket and are skipped unless `EBRAINS_BUCKET_SYNC_TEST_BUCKET` names one. Everything else runs offline against an in-memory bucket.
+The live tests in `tests/live` run against a real bucket and are skipped unless `EBRAINS_BUCKET_SYNC_TEST_BUCKET` names one. The [Live tests](https://github.com/ehennestad/ebrains-bucket-sync/actions/workflows/live-tests.yml) workflow runs them once a week as a service account, and on demand. Everything else runs offline against an in-memory bucket.
