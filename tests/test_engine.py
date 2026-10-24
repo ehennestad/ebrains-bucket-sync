@@ -1,21 +1,33 @@
 import math
+import os
+import sys
 import time
 
 import pytest
 
 from ebrains_bucket_sync.engine import (
     DOWNLOAD_PART_SUFFIX,
+    LocalFileChanged,
     SizeMismatchError,
     SyncEvent,
     SyncRefused,
     download_object,
     sync_to_bucket,
 )
+from ebrains_bucket_sync.local import local_file_entry
 from ebrains_bucket_sync.model import SyncOptions, SyncWarning
 
 from .conftest import FakeStorage, utc, write
 
 NO_WAIT = {"sleep": lambda seconds: None}
+
+needs_symlinks = pytest.mark.skipif(
+    sys.platform == "win32", reason="Creating symbolic links needs a privilege on Windows."
+)
+needs_permissions = pytest.mark.skipif(
+    sys.platform == "win32" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+    reason="Needs POSIX permissions that apply to the user.",
+)
 
 
 def statuses(results):
@@ -136,6 +148,84 @@ def test_never_uploads_a_multipart_manifest(folder, storage: FakeStorage):
     results = sync_to_bucket(folder, "b", storage, **NO_WAIT)
 
     assert [r.path for r in results] == ["big.dat"]
+
+
+def test_leftover_names_are_matched_in_lowercase_on_the_file_itself(folder, storage: FakeStorage):
+    # As the MATLAB toolbox matches them: a folder of such a name, a name in
+    # another case and a name without the leading "." are ordinary files
+    write(folder, "a.sync-part/b.txt", b"b")
+    write(folder, "Report.SYNC-PART", b"r")
+    write(folder, "multipart_manifest.json", b"{}")
+
+    results = sync_to_bucket(folder, "b", storage, **NO_WAIT)
+
+    assert [r.path for r in results] == [
+        "Report.SYNC-PART",
+        "a.sync-part/b.txt",
+        "multipart_manifest.json",
+    ]
+
+
+@needs_permissions
+def test_unreadable_folder_holds_back_deletions(folder, storage: FakeStorage):
+    write(folder, "a.txt", b"a")
+    write(folder, "locked/b.txt", b"b")
+    storage.put("b", "a.txt", b"a")
+    storage.put("b", "locked/b.txt", b"b")
+    storage.put("b", "extra.txt", b"e")
+    (folder / "locked").chmod(0o000)
+    try:
+        with pytest.warns(SyncWarning, match="could not be read"):
+            results = sync_to_bucket(folder, "b", storage, SyncOptions(delete=True), **NO_WAIT)
+    finally:
+        (folder / "locked").chmod(0o755)
+
+    assert statuses(results) == {
+        "a.txt": ("none", "unchanged", ""),
+        "extra.txt": ("delete", "extraneous", "skipped"),
+        "locked/b.txt": ("delete", "extraneous", "skipped"),
+    }
+    assert results[1].message == "Not deleted, since a local folder could not be read."
+    assert storage.deleted == []
+
+
+@needs_permissions
+def test_dry_run_reports_the_deletions_an_unreadable_folder_holds_back(folder, storage):
+    write(folder, "locked/b.txt", b"b")
+    write(folder, "a.txt", b"a")
+    storage.put("b", "extra.txt", b"e")
+    (folder / "locked").chmod(0o000)
+    try:
+        with pytest.warns(SyncWarning, match="could not be read"):
+            results = sync_to_bucket(
+                folder, "b", storage, SyncOptions(delete=True, dry_run=True), **NO_WAIT
+            )
+    finally:
+        (folder / "locked").chmod(0o755)
+
+    assert statuses(results)["extra.txt"] == ("delete", "extraneous", "skipped")
+    assert results[1].message == "Not deleted, since a local folder could not be read."
+
+
+@needs_symlinks
+def test_linked_folder_holds_back_deletions_unless_excluded(folder, tmp_path, storage):
+    outside = tmp_path / "outside"
+    write(outside, "elsewhere.txt", b"e")
+    write(folder, "a.txt", b"a")
+    (folder / "link").symlink_to(outside, target_is_directory=True)
+    storage.put("b", "a.txt", b"a")
+    storage.put("b", "link/elsewhere.txt", b"e")
+
+    with pytest.warns(SyncWarning, match="are symbolic links"):
+        results = sync_to_bucket(folder, "b", storage, SyncOptions(delete=True), **NO_WAIT)
+    excluded = sync_to_bucket(
+        folder, "b", storage, SyncOptions(delete=True, exclude=["link"]), **NO_WAIT
+    )
+
+    assert statuses(results)["link/elsewhere.txt"] == ("delete", "extraneous", "skipped")
+    assert results[1].message == "Not deleted, since a local folder is a symbolic link."
+    assert statuses(excluded) == {"a.txt": ("none", "unchanged", "")}
+    assert storage.deleted == []
 
 
 def test_refuses_to_empty_bucket_from_empty_folder(folder, storage: FakeStorage):
@@ -368,6 +458,34 @@ def test_failed_download_leaves_the_target(folder, storage: FakeStorage):
         download_object(storage, "b", "a.dat", target)
 
     assert target.read_bytes() == b""
+    assert part_files(folder) == []
+
+
+def test_download_object_replaces_a_file_that_still_is_as_it_was_judged(folder, storage):
+    storage.put("b", "a.dat", b"xyz")
+    target = write(folder, "a.dat", b"")
+
+    download_object(storage, "b", "a.dat", target, judged_file=local_file_entry(folder, "a.dat"))
+    download_object(storage, "b", "a.dat", folder / "new.dat", judged_file=None)
+
+    assert target.read_bytes() == b"xyz"
+    assert (folder / "new.dat").read_bytes() == b"xyz"
+
+
+def test_download_object_discards_the_download_of_a_file_changed_meanwhile(folder, storage):
+    storage.put("b", "a.dat", b"xyz")
+    target = write(folder, "a.dat", b"")
+    judged = local_file_entry(folder, "a.dat")
+    write(folder, "a.dat", b"edited by hand")
+    write(folder, "appeared.dat", b"new")
+
+    with pytest.raises(LocalFileChanged, match="changed while the object was downloaded"):
+        download_object(storage, "b", "a.dat", target, judged_file=judged)
+    with pytest.raises(LocalFileChanged):
+        download_object(storage, "b", "a.dat", folder / "appeared.dat", judged_file=None)
+
+    assert target.read_bytes() == b"edited by hand"
+    assert (folder / "appeared.dat").read_bytes() == b"new"
     assert part_files(folder) == []
 
 

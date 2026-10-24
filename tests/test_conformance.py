@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from ebrains_bucket_sync import engine
-from ebrains_bucket_sync.engine import sync_from_bucket
+from ebrains_bucket_sync.engine import never_synced, sync_from_bucket
 from ebrains_bucket_sync.exclude import ExcludeFileError, exclude_files, parse_exclude_file
 from ebrains_bucket_sync.local import LocalListing
 from ebrains_bucket_sync.model import FileEntry, PlanItem, SyncOptions
@@ -73,6 +73,13 @@ def test_exclude_file_fixture(case):
         assert error.value.line_number == case["expected_error_line"]
     else:
         assert parse_exclude_file(case["text"]) == case["expected_patterns"]
+
+
+@pytest.mark.parametrize("case", load_cases("never-synced"))
+def test_never_synced_fixture(case):
+    kept = [path for path in case["paths"] if not never_synced(path)]
+
+    assert kept == case["expected_kept"]
 
 
 @pytest.mark.parametrize("case", load_cases("refusal"))

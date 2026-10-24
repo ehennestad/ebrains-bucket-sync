@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import Any, Protocol
 from urllib.parse import quote
 
-from .engine import download_object
+from .engine import LocalFileChanged, download_object, never_synced
 from .local import compute_md5, list_local_files, local_file_entry
 from .model import BucketStorage, FileEntry, ListingProgressStorage
 from .remote import remote_files_from_objects
@@ -44,7 +44,6 @@ from .virtual_bucket import (
     BucketInfo,
     VirtualBucketError,
     file_states,
-    is_metadata_path,
     placeholders_of_removed_objects,
     read_bucket_info,
     read_manifest,
@@ -108,18 +107,24 @@ class VirtualBucket:
     bucket of many objects takes a while, so the manifest is only renewed
     by Host when asked to update from the bucket.
 
+    The browser shows the files a sync may touch: a path that no sync
+    touches (engine.never_synced), such as the file of an interrupted
+    transfer, is left out of the scan of the folder, of a listing of the
+    bucket, and of a manifest that another tool wrote with such an entry.
+
     Attributes:
         folder: Absolute path of the folder.
         info: The bucket the folder stands for and when it was listed.
         manifest: The objects of the last listing, or None if never listed.
-        local_files: The files of the folder at the last scan, outside .ebrains.
+        local_files: The files of the folder at the last scan, those a sync
+            may touch and not Finder's.
         files: One FileRow per path of the folder or the manifest, sorted by path.
     """
 
     def __init__(self, folder: Path, info: BucketInfo, manifest: list[FileEntry] | None) -> None:
         self.folder = Path(folder).resolve()
         self.info = info
-        self.manifest = manifest
+        self.manifest = None if manifest is None else _synced_entries(manifest)
         self.local_files: list[FileEntry] = []
         self.files: list[FileRow] = []
         # Checksums of local files by path, size and time, so that a scan
@@ -170,8 +175,8 @@ class VirtualBucket:
         """Read the files of the folder again and give each a state."""
         self.local_files = [
             entry
-            for entry in list_local_files(self.folder)
-            if not is_metadata_path(entry.path) and entry.path.rsplit("/", 1)[-1] != FINDER_FILE
+            for entry in _synced_entries(list_local_files(self.folder))
+            if entry.path.rsplit("/", 1)[-1] != FINDER_FILE
         ]
         self._assign_states()
 
@@ -186,7 +191,7 @@ class VirtualBucket:
         """
         local_by_path = {entry.path: entry for entry in self.local_files}
         for path in set(paths):
-            entry = local_file_entry(self.folder, path)
+            entry = None if never_synced(path) else local_file_entry(self.folder, path)
             if entry is None:
                 local_by_path.pop(path, None)
             else:
@@ -487,8 +492,7 @@ class Host:
             # Cancel pressed during it takes effect once it is done
             self._check_cancelled("update")
 
-        entries = remote_files_from_objects(objects, bucket, prefix)
-        return [entry for entry in entries if not is_metadata_path(entry.path)]
+        return _synced_entries(remote_files_from_objects(objects, bucket, prefix))
 
     def _download(self, paths: list[str]) -> None:
         """Download the files of the given paths that are online only or differ."""
@@ -555,11 +559,16 @@ class Host:
         """Download an object into its file, as a sync from the bucket does.
 
         The file gets the size check and the time of its object from the
-        last listing; without one the download is only put in place.
+        last listing; without one the download is only put in place. The
+        download replaces the file only while it still is as it was last
+        read, which the decision to replace it rested on: a file edited
+        meanwhile holds data that was not judged, so the download is
+        discarded with an error.
         """
         entry = self.bucket.manifest_entry(path)
         expected_bytes = None if entry is None else entry.bytes
         modified_time = None if entry is None else entry.modified_time
+        judged = self.bucket.local_entries([path])
         last_report = 0.0
 
         def on_progress(received: int, total: int | None) -> None:
@@ -581,6 +590,7 @@ class Host:
             expected_bytes=expected_bytes,
             modified_time=modified_time,
             on_progress=on_progress,
+            judged_file=judged[0] if judged else None,
         )
 
     def _make_online_only(self, paths: list[str]) -> None:
@@ -750,6 +760,11 @@ class Host:
 # ---------------------------------------------------------------- Files
 
 
+def _synced_entries(entries: Iterable[FileEntry]) -> list[FileEntry]:
+    """The entries whose paths a sync may touch (see engine.never_synced), in the same order."""
+    return [entry for entry in entries if not never_synced(entry.path)]
+
+
 def create_placeholders(root: Path, paths: Iterable[str]) -> None:
     """Create an empty file for each path below root, and the folders of the paths.
 
@@ -782,10 +797,6 @@ def delete_placeholders(root: Path, paths: Iterable[str]) -> set[str]:
         except OSError:
             kept.add(path)
     return kept
-
-
-class LocalFileChanged(OSError):
-    """A file changed between the moment it was judged and the moment it was to be emptied."""
 
 
 def replace_with_placeholders(root: Path, files: Iterable[FileEntry]) -> None:

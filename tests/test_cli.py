@@ -56,6 +56,26 @@ def test_push_uploads_and_reports(runner, folder, fake_storage):
     assert fake_storage.uploaded == [("b", "results/a.txt")]
 
 
+@pytest.mark.parametrize("prefix", ["../set", "C:/set"])
+def test_prefix_that_does_not_name_a_folder_is_refused_before_anything_is_done(
+    runner, folder, fake_storage, tmp_path, prefix
+):
+    write(folder, "a.txt", b"a")
+    new_folder = tmp_path / "new"
+    commands = [
+        ["push", str(folder), "b"],
+        ["pull", "b", str(folder)],
+        ["browse", str(new_folder), "--bucket", "b"],
+    ]
+
+    results = [runner.invoke(cli.main, [*command, "--prefix", prefix]) for command in commands]
+
+    assert [result.exit_code for result in results] == [2, 2, 2]
+    assert all("does not name a folder of the bucket" in result.output for result in results)
+    assert fake_storage.listings == []
+    assert not new_folder.exists()
+
+
 def test_push_dry_run_lists_the_plan(runner, folder, fake_storage):
     write(folder, "a.txt", b"a")
     fake_storage.put("b", "extra.txt", b"e")
