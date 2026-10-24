@@ -6,7 +6,7 @@ import re
 import warnings
 from datetime import datetime, timezone
 
-from .model import BucketStorage, FileEntry, SyncWarning
+from .model import BucketStorage, FileEntry, RemoteObject, SyncWarning
 from .paths import folder_object_flags, is_safe_relative_path
 
 MAX_SINGLE_OBJECT_BYTES = 5 * 1024**3
@@ -29,7 +29,17 @@ def list_remote_files(storage: BucketStorage, bucket: str, prefix: str) -> list[
     ("<md5>-<parts>"), or that of an object above 5 GiB. A smaller object
     uploaded in segments reports such a checksum too.
     """
-    objects = storage.list_objects(bucket, prefix)
+    return remote_files_from_objects(storage.list_objects(bucket, prefix), bucket, prefix)
+
+
+def remote_files_from_objects(
+    objects: list[RemoteObject], bucket: str, prefix: str
+) -> list[FileEntry]:
+    """The file entries of the objects of a listing, as list_remote_files gives them.
+
+    For a caller that lists the objects itself, to show the progress of
+    the listing.
+    """
     if not objects:
         return []
 
@@ -48,7 +58,7 @@ def list_remote_files(storage: BucketStorage, bucket: str, prefix: str) -> list[
             f"{len(unsafe)} object(s) of bucket {bucket!r} have names that do not stay below "
             f"the synced folder, for example {sorted(unsafe)[0]!r}, and are left out of the sync.",
             SyncWarning,
-            stacklevel=2,
+            stacklevel=3,
         )
         objects = [obj for obj in objects if obj.name not in unsafe]
 

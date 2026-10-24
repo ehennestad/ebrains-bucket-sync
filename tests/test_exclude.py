@@ -1,6 +1,17 @@
-from ebrains_bucket_sync.exclude import exclude_files, pattern_to_regex
+from pathlib import Path
+
+import pytest
+
+from ebrains_bucket_sync.exclude import (
+    ExcludeFileError,
+    exclude_files,
+    pattern_to_regex,
+    read_exclude_file,
+)
 
 from .conftest import entry
+
+TEMPLATE = Path(__file__).resolve().parents[1] / "templates" / "dataset.ignore"
 
 
 def kept_paths(paths, patterns):
@@ -45,11 +56,75 @@ def test_regular_expression_characters_are_literal():
     assert kept == ["a1.txt", "sub/xzy"]
 
 
+def test_ignoring_case_matches_patterns_without_regard_to_case():
+    files = [entry("cache.TMP"), entry("Build/a.o"), entry("keep.txt")]
+
+    kept = exclude_files(files, ["*.tmp", "/build"], ignore_case=True)
+
+    assert [item.path for item in kept] == ["keep.txt"]
+    assert kept_paths(["cache.TMP", "Build/a.o"], ["*.tmp", "/build"]) == ["cache.TMP", "Build/a.o"]
+
+
 def test_double_star_crosses_folders_and_single_star_does_not():
     assert pattern_to_regex("logs/**/*.log").fullmatch("logs/x/y/b.log")
-    assert pattern_to_regex("logs/**/*.log").fullmatch("logs/a.log") is None
     assert pattern_to_regex("logs/*.log").fullmatch("logs/x/b.log") is None
+
+
+def test_double_star_between_slashes_matches_no_folder_too():
+    # As in a .gitignore file. Otherwise "**/cache" would miss the cache
+    # folder at the root, and a sync with deletions would delete it.
+    assert pattern_to_regex("logs/**/*.log").fullmatch("logs/a.log")
+    assert kept_paths(["cache/big.dat", "a/cache/x", "cached/y"], ["**/cache"]) == ["cached/y"]
+    assert kept_paths(["a/b", "a/x/y/b", "a/b2"], ["a/**/b"]) == ["a/b2"]
+    assert kept_paths(["a/x", "a/y/z", "ab/x"], ["a/**"]) == ["ab/x"]
+
+
+def test_leading_slash_anchors_to_the_root():
+    assert kept_paths(["build/a.o", "sub/build/b.o"], ["/build"]) == ["sub/build/b.o"]
 
 
 def test_empty_and_slash_only_patterns_exclude_nothing():
     assert kept_paths(["a.txt"], ["", "/", "//"]) == ["a.txt"]
+
+
+def test_reads_the_patterns_of_a_file(tmp_path):
+    exclude_file = tmp_path / "dataset.ignore"
+    exclude_file.write_bytes("\ufeff# comment\r\n*.tmp\r\n\r\n.git/\r\n".encode())
+
+    assert read_exclude_file(exclude_file) == ["*.tmp", ".git/"]
+
+
+def test_refuses_a_file_that_re_includes_paths(tmp_path):
+    exclude_file = tmp_path / "dataset.ignore"
+    exclude_file.write_text("*.txt\n!keep.txt\n")
+
+    with pytest.raises(ExcludeFileError, match='Line 2 \\("!keep.txt"\\)'):
+        read_exclude_file(exclude_file)
+
+
+def test_dataset_template_leaves_out_clutter_and_keeps_data():
+    paths = [
+        ".git/config",
+        ".gitignore",
+        "code/.DS_Store",
+        "code/._analysis.py",
+        "code/__pycache__/analysis.cpython-312.pyc",
+        "code/analysis.asv",
+        "notes/~$report.docx",
+        ".env",
+        "code/analysis.py",
+        "code/analysis.m",
+        "data/session-1.nwb",
+        "environment/xenium.yml",
+        "README.md",
+    ]
+
+    kept = kept_paths(paths, read_exclude_file(TEMPLATE))
+
+    assert kept == [
+        "code/analysis.py",
+        "code/analysis.m",
+        "data/session-1.nwb",
+        "environment/xenium.yml",
+        "README.md",
+    ]

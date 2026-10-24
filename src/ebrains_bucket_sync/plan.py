@@ -8,7 +8,7 @@ must pass.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import timedelta
 
@@ -29,6 +29,7 @@ def plan_sync(
     comparison: str = "SizeAndTime",
     delete: bool = False,
     time_tolerance: timedelta = TIME_TOLERANCE,
+    ignore_case: bool = False,
 ) -> list[PlanItem]:
     """One PlanItem per path found on either side, sorted by path.
 
@@ -46,17 +47,21 @@ def plan_sync(
             have. Otherwise they are kept, with action "none".
         time_tolerance: Difference in modification time that still counts
             as the same time.
+        ignore_case: Whether paths that differ only in case name the same
+            file, as on a file system that ignores case. A file matched
+            this way is planned under its source path.
     """
     if comparison not in COMPARISONS:
         raise ValueError(f"comparison must be one of {COMPARISONS}, not {comparison!r}.")
 
     source = list(source)
     target = list(target)
-    target_by_path = {entry.path: entry for entry in target}
+    key = match_key(ignore_case)
+    target_by_key = {key(entry.path): entry for entry in target}
 
     items = []
     for entry in source:
-        counterpart = target_by_path.get(entry.path)
+        counterpart = target_by_key.get(key(entry.path))
         if counterpart is None:
             reason = "new"
         else:
@@ -64,14 +69,23 @@ def plan_sync(
         action = "none" if reason == "unchanged" else "copy"
         items.append(PlanItem(entry.path, action, reason, entry.bytes))
 
-    source_paths = {entry.path for entry in source}
+    source_keys = {key(entry.path) for entry in source}
     extraneous_action = "delete" if delete else "none"
     for entry in target:
-        if entry.path not in source_paths:
+        if key(entry.path) not in source_keys:
             items.append(PlanItem(entry.path, extraneous_action, "extraneous", entry.bytes))
 
     items.sort(key=lambda item: item.path)
     return items
+
+
+def match_key(ignore_case: bool) -> Callable[[str], str]:
+    """What the paths of the two sides of a sync are matched by.
+
+    Where case is ignored, paths are matched in lowercase, as the MATLAB
+    toolbox matches them.
+    """
+    return str.lower if ignore_case else str
 
 
 def change_reason(

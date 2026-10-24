@@ -30,7 +30,8 @@ class FakeStorage:
 
     An object put with the default last_modified counts as uploaded after
     any local file is changed, so a file of the same size on both sides is
-    unchanged unless a test says otherwise.
+    unchanged unless a test says otherwise. An error in errors is raised by
+    the upload and the download of that object.
     """
 
     UPLOADED_AFTER_LOCAL = "2999-01-01T00:00:00"
@@ -40,7 +41,9 @@ class FakeStorage:
         self.buckets: dict[str, dict[str, FakeObject]] = defaultdict(dict)
         self.errors: dict[str, Exception] = {}
         self.upload_attempts: Counter[str] = Counter()
+        self.listings: list[tuple[str, str]] = []
         self.uploaded: list[tuple[str, str]] = []
+        self.downloaded: list[tuple[str, str]] = []
         self.deleted: list[tuple[str, str]] = []
 
     def put(
@@ -60,6 +63,7 @@ class FakeStorage:
         return self.buckets[bucket][name].content
 
     def list_objects(self, bucket: str, prefix: str) -> list[RemoteObject]:
+        self.listings.append((bucket, prefix))
         return [
             RemoteObject(name, len(obj.content), obj.last_modified, obj.hash, obj.content_type)
             for name, obj in sorted(self.buckets[bucket].items())
@@ -75,6 +79,15 @@ class FakeStorage:
             content, "2024-06-01T12:00:00", "application/octet-stream", md5_of(content)
         )
         self.uploaded.append((bucket, object_name))
+
+    def download(self, bucket: str, object_name: str, local_path: Path, *, on_progress=None):
+        if object_name in self.errors:
+            raise self.errors[object_name]
+        content = self.buckets[bucket][object_name].content
+        Path(local_path).write_bytes(content)
+        if on_progress is not None:
+            on_progress(len(content), len(content))
+        self.downloaded.append((bucket, object_name))
 
     def delete_object(self, bucket: str, object_name: str) -> None:
         del self.buckets[bucket][object_name]

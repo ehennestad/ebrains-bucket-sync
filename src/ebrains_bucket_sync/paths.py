@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from pathlib import PureWindowsPath
 
 from .model import RemoteObject
 
@@ -12,12 +13,17 @@ def is_safe_relative_path(path: str) -> bool:
 
     False for a name that could leave the folder or point elsewhere: a "."
     or ".." segment, an empty segment (a leading, trailing or doubled "/"),
-    or a backslash, which Windows reads as a separator. Object names come
-    from the bucket, which other members of a collab can write to, so a
-    sync must not trust them to be plain paths.
+    a backslash, which Windows reads as a separator, or a Windows drive such
+    as "C:" as the first segment, which makes the name absolute there.
+    Object names come from the bucket, which other members of a collab can
+    write to, so a sync must not trust them to be plain paths.
     """
     segments = path.split("/")
-    return not any(segment in ("", ".", "..") for segment in segments) and "\\" not in path
+    if any(segment in ("", ".", "..") for segment in segments) or "\\" in path:
+        return False
+    # Joining a folder with a name that has a drive gives a path on that
+    # drive, outside the folder, so the name must have no anchor on Windows
+    return not PureWindowsPath(path).anchor
 
 
 def normalize_prefix(prefix: str) -> str:

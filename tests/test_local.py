@@ -1,8 +1,15 @@
+import os
+import sys
 from datetime import timezone
 
 import pytest
 
-from ebrains_bucket_sync.local import compute_md5, list_local_files
+from ebrains_bucket_sync.local import (
+    compute_md5,
+    is_case_insensitive,
+    list_local_files,
+    scan_local_folder,
+)
 
 from .conftest import write
 
@@ -33,3 +40,51 @@ def test_md5_of_known_content(folder):
     path = write(folder, "hello.txt", b"hello world")
 
     assert compute_md5(path) == "5eb63bbbe01eeed093cb22bb8f5acdc3"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Symbolic links need privileges on Windows.")
+def test_scan_reports_linked_folders_without_listing_their_files(folder, tmp_path):
+    outside = tmp_path / "outside"
+    write(outside, "elsewhere.txt", b"e")
+    write(folder, "a.txt", b"a")
+    (folder / "sub").mkdir()
+    (folder / "sub" / "link").symlink_to(outside, target_is_directory=True)
+
+    listing = scan_local_folder(folder)
+
+    assert [f.path for f in listing.files] == ["a.txt"]
+    assert listing.linked_folders == ["sub/link"]
+    assert listing.unreadable_folders == []
+    assert [f.path for f in list_local_files(folder)] == ["a.txt"]
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+    reason="Needs POSIX permissions that apply to the user.",
+)
+def test_scan_reports_unreadable_folders(folder):
+    write(folder, "a.txt", b"a")
+    write(folder, "locked/b.txt", b"b")
+    (folder / "locked").chmod(0o000)
+    try:
+        listing = scan_local_folder(folder)
+    finally:
+        (folder / "locked").chmod(0o755)
+
+    assert [f.path for f in listing.files] == ["a.txt"]
+    assert listing.unreadable_folders == ["locked"]
+
+
+def test_case_probe_looks_up_a_listed_file_with_its_case_changed(folder):
+    write(folder, "Data.txt", b"d")
+    ignores_case = (folder / "DATA.TXT").is_file()
+
+    assert is_case_insensitive(folder, ["Data.txt"]) == ignores_case
+
+
+def test_case_probe_without_a_name_to_look_up_goes_by_platform(folder):
+    write(folder, "123", b"d")
+
+    expected = sys.platform in ("darwin", "win32")
+    assert is_case_insensitive(folder, ["123"]) == expected
+    assert is_case_insensitive(folder / "missing", []) == expected

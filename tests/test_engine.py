@@ -1,11 +1,19 @@
 import math
+import time
 
 import pytest
 
-from ebrains_bucket_sync.engine import SyncEvent, SyncRefused, sync_to_bucket
+from ebrains_bucket_sync.engine import (
+    DOWNLOAD_PART_SUFFIX,
+    SizeMismatchError,
+    SyncEvent,
+    SyncRefused,
+    download_object,
+    sync_to_bucket,
+)
 from ebrains_bucket_sync.model import SyncOptions, SyncWarning
 
-from .conftest import FakeStorage, write
+from .conftest import FakeStorage, utc, write
 
 NO_WAIT = {"sleep": lambda seconds: None}
 
@@ -106,6 +114,19 @@ def test_leaves_excluded_files_alone_on_both_sides(folder, storage: FakeStorage)
 
     assert [r.path for r in results] == ["keep.txt"]
     assert "old.tmp" in storage.buckets["b"]
+
+
+def test_never_syncs_the_part_file_of_an_interrupted_download(folder, storage: FakeStorage):
+    write(folder, "a.dat", b"a")
+    # Left behind by a download that was killed before download_object could remove it
+    write(folder, f"a.dat.k3x9{DOWNLOAD_PART_SUFFIX}", b"partial")
+    storage.put("b", f"old.dat.z1{DOWNLOAD_PART_SUFFIX}", b"p")
+
+    results = sync_to_bucket(folder, "b", storage, SyncOptions(delete=True), **NO_WAIT)
+
+    assert [r.path for r in results] == ["a.dat"]
+    assert storage.uploaded == [("b", "a.dat")]
+    assert storage.deleted == []
 
 
 def test_never_uploads_a_multipart_manifest(folder, storage: FakeStorage):
@@ -297,3 +318,67 @@ def test_failure_messages_leave_out_url_signatures(folder, storage, error_text, 
 
     assert [r.message for r in results] == [message]
     assert [e.message for e in events if e.kind == "upload_failed"] == [message]
+
+
+# ---------------------------------------------------------------- download_object
+
+
+def part_files(folder):
+    return sorted(p.name for p in folder.rglob(f"*{DOWNLOAD_PART_SUFFIX}"))
+
+
+def test_download_object_replaces_the_target_once_complete(folder, storage: FakeStorage):
+    storage.put("b", "results/sub/a.dat", b"xyz")
+    target = folder / "sub" / "a.dat"
+    progress = []
+
+    download_object(
+        storage,
+        "b",
+        "results/sub/a.dat",
+        target,
+        expected_bytes=3,
+        modified_time=utc(2024, 6, 1, 12),
+        on_progress=lambda received, total: progress.append((received, total)),
+    )
+
+    assert target.read_bytes() == b"xyz"
+    assert target.stat().st_mtime == utc(2024, 6, 1, 12).timestamp()
+    assert progress == [(3, 3)]
+    assert part_files(folder) == []
+
+
+def test_download_object_of_another_size_leaves_the_target(folder, storage: FakeStorage):
+    storage.put("b", "a.dat", b"xyzzy")
+    target = write(folder, "a.dat", b"old")
+
+    with pytest.raises(SizeMismatchError, match="has 5 bytes, where the object has 3"):
+        download_object(storage, "b", "a.dat", target, expected_bytes=3)
+
+    assert target.read_bytes() == b"old"
+    assert part_files(folder) == []
+
+
+def test_failed_download_leaves_the_target(folder, storage: FakeStorage):
+    storage.put("b", "a.dat", b"xyz")
+    storage.errors["a.dat"] = ConnectionError("lost")
+    target = write(folder, "a.dat", b"")
+
+    with pytest.raises(ConnectionError):
+        download_object(storage, "b", "a.dat", target)
+
+    assert target.read_bytes() == b""
+    assert part_files(folder) == []
+
+
+def test_download_object_without_a_known_size_or_time_keeps_the_time_of_the_download(
+    folder, storage: FakeStorage
+):
+    storage.put("b", "a.dat", b"xyz")
+    target = folder / "a.dat"
+    before = time.time() - 1
+
+    download_object(storage, "b", "a.dat", target)
+
+    assert target.read_bytes() == b"xyz"
+    assert target.stat().st_mtime >= before

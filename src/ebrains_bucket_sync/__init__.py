@@ -3,7 +3,7 @@
 from importlib.metadata import PackageNotFoundError, version
 
 from .auth import AuthError, DeviceFlowAuthenticator, TokenStore
-from .engine import SyncEvent, SyncRefused, sync_to_bucket
+from .engine import SyncEvent, SyncRefused, sync_from_bucket, sync_to_bucket
 from .model import (
     COMPARISONS,
     ActionResult,
@@ -40,5 +40,6 @@ __all__ = [
     "TokenStore",
     "deletion_refusal",
     "plan_sync",
+    "sync_from_bucket",
     "sync_to_bucket",
 ]

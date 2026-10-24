@@ -110,6 +110,24 @@ def test_time_tolerance_is_configurable():
     assert plan_sync(source, target, time_tolerance=timedelta(minutes=1))[0].reason == "unchanged"
 
 
+def test_ignoring_case_matches_names_that_differ_in_case():
+    source = [entry("Data.txt", 3), entry("same.txt", 1)]
+    target = [entry("data.txt", 2), entry("SAME.TXT", 1), entry("extra.txt", 1)]
+
+    assert plan_sync(source, target, delete=True, ignore_case=True) == [
+        PlanItem("Data.txt", "copy", "size", 3),
+        PlanItem("extra.txt", "delete", "extraneous", 1),
+        PlanItem("same.txt", "none", "unchanged", 1),
+    ]
+    assert [item.reason for item in plan_sync(source, target)] == [
+        "new",
+        "extraneous",
+        "extraneous",
+        "extraneous",
+        "new",
+    ]
+
+
 class TestDeletionRefusal:
     def test_nothing_to_refuse_without_deletions(self):
         plan = [PlanItem("extra.txt", "none", "extraneous", 1)]
