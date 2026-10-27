@@ -6,6 +6,7 @@ import time
 from types import SimpleNamespace
 
 import pytest
+import requests
 from ebrains_drive.exceptions import ClientHttpError, TokenExpired, Unauthorized
 
 import ebrains_bucket_sync.storage as storage_module
@@ -170,6 +171,27 @@ def test_token_is_renewed_once_when_parallel_uploads_are_refused(folder):
     assert len(renewals) == 1
     assert {(r.path, r.status) for r in results} == {(f"f{k}.txt", "done") for k in range(workers)}
     assert sorted(uploads) == [("token-1", f"f{k}.txt") for k in range(workers)]
+
+
+def test_requests_of_the_client_get_the_timeout_unless_given_one(monkeypatch):
+    # ebrains_drive lists a bucket and asks for signed URLs through its
+    # client's session without a timeout, which would hang on a stalled
+    # connection
+    class Client:
+        def __init__(self, token):
+            self.session = requests.Session()
+
+    sent = []
+    monkeypatch.setattr(
+        requests.Session, "request", lambda self, method, url, **kwargs: sent.append(kwargs)
+    )
+    storage = EbrainsDriveStorage(RecordingTokens(), client_factory=Client, timeout=7)
+
+    client = storage._current_client()
+    client.session.request("GET", "https://data-proxy.example.org/v1/buckets/b")
+    client.session.request("GET", "https://data-proxy.example.org/v1/buckets/b", timeout=1)
+
+    assert [kwargs["timeout"] for kwargs in sent] == [7, 1]
 
 
 def test_other_errors_are_not_retried_with_a_new_token():

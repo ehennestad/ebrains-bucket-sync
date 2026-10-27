@@ -5,6 +5,7 @@ import time
 
 import pytest
 
+import ebrains_bucket_sync.local as local_module
 from ebrains_bucket_sync.engine import (
     DOWNLOAD_PART_SUFFIX,
     LocalFileChanged,
@@ -487,6 +488,30 @@ def test_download_object_discards_the_download_of_a_file_changed_meanwhile(folde
     assert target.read_bytes() == b"edited by hand"
     assert (folder / "appeared.dat").read_bytes() == b"new"
     assert part_files(folder) == []
+
+
+@needs_permissions
+def test_download_object_gives_a_new_file_the_mode_of_a_new_file(folder, storage, monkeypatch):
+    # mkstemp makes a file readable to its owner only, which would leave
+    # a file pulled into a shared folder unreadable to the group
+    monkeypatch.setattr(local_module, "_UMASK", 0o027)
+    storage.put("b", "a.dat", b"xyz")
+
+    download_object(storage, "b", "a.dat", folder / "a.dat")
+
+    assert oct(os.stat(folder / "a.dat").st_mode & 0o777) == oct(0o640)
+
+
+@needs_permissions
+def test_download_object_keeps_the_mode_of_the_file_it_replaces(folder, storage):
+    storage.put("b", "a.dat", b"xyz")
+    target = write(folder, "a.dat", b"")
+    os.chmod(target, 0o604)
+
+    download_object(storage, "b", "a.dat", target)
+
+    assert target.read_bytes() == b"xyz"
+    assert oct(target.stat().st_mode & 0o777) == oct(0o604)
 
 
 def test_download_object_without_a_known_size_or_time_keeps_the_time_of_the_download(

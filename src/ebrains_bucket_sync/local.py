@@ -15,6 +15,11 @@ from .model import FileEntry
 
 MD5_BLOCK_SIZE = 16 * 1024 * 1024
 
+_UMASK = os.umask(0)
+os.umask(_UMASK)
+"""The umask of the process, read once at import: os.umask reads it only by
+setting it, which is not safe once transfers run on several threads."""
+
 
 @dataclass(frozen=True)
 class LocalListing:
@@ -115,6 +120,27 @@ def is_case_insensitive(root: str | os.PathLike[str], local_paths: Sequence[str]
 
     probe = probed.upper() if probed.upper() != probed else probed.lower()
     return probe not in set(local_paths) and (Path(root) / probe).is_file()
+
+
+def give_file_mode(temporary: Path, target: Path) -> None:
+    """Give a temporary file the mode of the file it will replace, or that of a new file.
+
+    tempfile.mkstemp creates a file that only its owner can read, which
+    suits a token file but not data: a file pulled into a shared folder
+    would be unreadable to the group. A file that replaces another takes
+    that file's mode, so permissions set by hand survive the replacement.
+    Any other file gets what open would give a new file: 0o666 with the
+    umask applied. On Windows only the read-only flag is affected.
+    """
+    try:
+        info = target.stat()
+    except OSError:  # nothing at the target
+        info = None
+    if info is not None and stat.S_ISREG(info.st_mode):
+        mode = stat.S_IMODE(info.st_mode)
+    else:
+        mode = 0o666 & ~_UMASK
+    os.chmod(temporary, mode)
 
 
 def is_link(path: Path) -> bool:
