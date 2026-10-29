@@ -152,6 +152,17 @@ def test_excluded_placeholder_of_a_removed_object_is_kept(folder, storage):
 
     assert [r.path for r in results] == ["a.txt"]
     assert (folder / "gone.dat").is_file()
+    # The manifest is made before the exclude patterns, so the entry stays
+    # and the next push still knows the file for a placeholder
+    assert [entry.path for entry in read_manifest(folder)] == ["a.txt", "gone.dat"]
+
+    results = sync_to_bucket(folder, "b", storage, **NO_WAIT)
+
+    assert [(r.path, r.reason) for r in results] == [
+        ("a.txt", "unchanged"),
+        ("gone.dat", "placeholder"),
+    ]
+    assert storage.uploaded == []
 
 
 def test_failed_download_holds_back_the_deletion_of_placeholders(folder, storage):

@@ -64,6 +64,7 @@ from .virtual_bucket import (
     describe,
     is_metadata_path,
     manifest_after_push,
+    placeholders_of_removed_objects,
     protect_placeholders,
     read_bucket_info,
     read_manifest,
@@ -482,7 +483,9 @@ def sync_from_bucket(
     _run_actions(results, delete_indices, "delete", delete, None, emit)
 
     if is_virtual_bucket:
-        kept = _undeleted_placeholders(results, local_folder, local_by_path, manifest)
+        kept = _undeleted_placeholders(
+            results, local_folder, unexcluded_local_files, listing, manifest
+        )
         write_manifest(local_folder, sorted(listing + kept, key=lambda entry: entry.path))
         write_bucket_info(local_folder, replace(bucket_info, listed_at=listed_at))
 
@@ -681,27 +684,31 @@ def _update_metadata(
 def _undeleted_placeholders(
     results: list[ActionResult],
     local_folder: Path,
-    local_by_path: dict[str, FileEntry],
+    unexcluded_local_files: list[FileEntry],
+    listing: list[FileEntry],
     manifest: list[FileEntry] | None,
 ) -> list[FileEntry]:
     """The manifest entries of the placeholders of removed objects that a pull left in place.
 
-    A placeholder whose deletion was held back or failed still stands for
-    its object, so its entry stays in the manifest, as after a push, and
-    the next push does not upload the empty file as a new object. A file
-    that holds data by now is no placeholder and gets no entry.
+    A placeholder whose deletion was held back or failed, or that an
+    exclude pattern left out of the sync, still stands for its object, so
+    its entry stays in the manifest, as after a push, and the next push
+    does not upload the empty file as a new object. The placeholders are
+    found in the local listing before the exclude patterns, as the
+    manifest is made from the listing before them. A file that holds data
+    by now is no placeholder and gets no entry.
     """
-    manifest_by_path = {entry.path: entry for entry in manifest or ()}
+    deleted = {r.path for r in results if r.reason == "placeholder" and r.status == "done"}
     kept = []
-    for result in results:
-        if result.reason != "placeholder" or result.status == "done":
+    for entry in placeholders_of_removed_objects(unexcluded_local_files, listing, manifest):
+        if entry.path in deleted:
             continue
         try:
-            is_empty = (local_folder / local_by_path[result.path].path).stat().st_size == 0
+            is_empty = (local_folder / entry.path).stat().st_size == 0
         except OSError:
             is_empty = False
         if is_empty:
-            kept.append(manifest_by_path[result.path])
+            kept.append(entry)
     return kept
 
 
