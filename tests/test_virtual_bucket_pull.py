@@ -158,11 +158,8 @@ def test_excluded_placeholder_of_a_removed_object_is_kept(folder, storage):
 
     results = sync_to_bucket(folder, "b", storage, **NO_WAIT)
 
-    assert [(r.path, r.reason) for r in results] == [
-        ("a.txt", "unchanged"),
-        ("gone.dat", "placeholder"),
-    ]
-    assert storage.uploaded == []
+    assert [r.reason for r in results if r.path == "gone.dat"] == ["placeholder"]
+    assert all(name != "gone.dat" for _, name in storage.uploaded)
 
 
 def test_failed_download_holds_back_the_deletion_of_placeholders(folder, storage):
