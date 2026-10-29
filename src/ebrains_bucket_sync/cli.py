@@ -19,7 +19,7 @@ from .exclude import ExcludeFileError, read_exclude_file
 from .model import COMPARISONS, ActionResult, BucketStorage, SyncOptions, SyncWarning
 from .paths import InvalidPrefixError, normalize_prefix
 from .planfile import plan_to_dict, write_plan_file
-from .storage import EbrainsDriveStorage
+from .storage import EbrainsDriveStorage, request_error_message
 from .text import format_size
 from .virtual_bucket import VirtualBucketError
 
@@ -284,6 +284,13 @@ def _run_sync(
         # An OSError is a local folder that cannot be created or read, or a
         # lost connection, since the errors of requests are OSErrors too
         raise click.ClickException(str(error)) from error
+    except Exception as error:
+        # A request the Data Proxy refused, such as one for a bucket that
+        # does not exist, is an error of the command, not a traceback
+        message = request_error_message(error)
+        if message is None:
+            raise
+        raise click.ClickException(message) from error
     else:
         if any(result.status == "failed" for result in results):
             exit_code = EXIT_INCOMPLETE
@@ -336,7 +343,8 @@ def browse(folder: Path, bucket: str | None, prefix: str | None, page: Path | No
         virtual_bucket = VirtualBucket.open(folder, bucket, prefix)
         if page is None:
             page = default_page_path()
-    except (VirtualBucketError, FileNotFoundError) as error:
+    except (VirtualBucketError, OSError) as error:
+        # An OSError is a folder that cannot be created, read or written
         raise click.ClickException(str(error)) from error
     show_browser(virtual_bucket, make_storage(), page, update_on_ready=is_new_folder)
 
