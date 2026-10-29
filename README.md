@@ -12,6 +12,8 @@ pipx install ebrains-bucket-sync
 
 No pipx, or using the package from Python? See [Installing ebrains-bucket-sync](https://github.com/ehennestad/ebrains-bucket-sync/blob/main/docs/install.md).
 
+The changes of each release are in [CHANGELOG.md](https://github.com/ehennestad/ebrains-bucket-sync/blob/main/CHANGELOG.md).
+
 ## Use
 
 Log in once. A link opens the EBRAINS login in the browser, and the login is kept for later runs:
