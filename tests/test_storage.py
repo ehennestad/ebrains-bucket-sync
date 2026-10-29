@@ -259,6 +259,46 @@ def test_manifest_of_a_file_changed_after_it_is_discarded(folder, monkeypatch):
     assert not manifest.exists()
 
 
+def test_manifest_of_an_upload_the_store_does_not_know_is_discarded(folder, monkeypatch):
+    # The manifest names an upload of one object of one bucket. The same
+    # file pushed to another bucket resumes with that upload and is refused.
+    large = write(folder, "large.bin", b"xyz")
+    manifest = write(folder, "large.bin.multipart_manifest.json", b'{"upload_id": "x"}')
+    set_mtime(manifest, 60)
+    attempts = []
+
+    def upload(self, filelike, filename, **kwargs):
+        attempts.append(manifest.exists())
+        if manifest.exists():
+            raise ClientHttpError(404, "Expected (200,), but got 404")
+        self.uploads.append((filelike, filename, kwargs))
+
+    monkeypatch.setattr(FakeBucket, "upload", upload)
+
+    bucket = upload_large(folder, monkeypatch)
+
+    assert attempts == [True, False]
+    assert bucket.uploads == [(str(large), "large.bin", {"timeout": 120.0})]
+    assert not manifest.exists()
+
+
+def test_a_refused_upload_without_a_manifest_is_raised(folder, monkeypatch):
+    # Without a manifest a 404 is the bucket's or the object's, not a stale resume
+    write(folder, "large.bin", b"xyz")
+    attempts = []
+
+    def upload(self, filelike, filename, **kwargs):
+        attempts.append(filename)
+        raise ClientHttpError(404, "Expected (200,), but got 404")
+
+    monkeypatch.setattr(FakeBucket, "upload", upload)
+
+    with pytest.raises(ClientHttpError):
+        upload_large(folder, monkeypatch)
+
+    assert attempts == ["large.bin"]
+
+
 @pytest.mark.skipif(os.name == "nt", reason="Windows has no change time to detect this with.")
 def test_manifest_of_a_file_replaced_with_an_older_time_is_discarded(folder, monkeypatch):
     manifest = write(folder, "large.bin.multipart_manifest.json", b"{}")
