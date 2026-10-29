@@ -65,6 +65,11 @@ def is_transient_error(error: BaseException) -> bool:
     return isinstance(error, ClientHttpError) and isinstance(code, int) and code >= 500
 
 
+def multipart_manifest_path(local_path: Path) -> Path:
+    """The manifest ebrains_drive keeps next to a file during a multipart upload."""
+    return Path(f"{local_path}{MULTIPART_MANIFEST_SUFFIX}")
+
+
 def discard_stale_manifest(local_path: Path) -> None:
     """Delete the multipart manifest of a file that changed after it was written.
 
@@ -78,7 +83,7 @@ def discard_stale_manifest(local_path: Path) -> None:
     that keep the modification time of the original cannot set it back. On
     Windows st_ctime is the creation time, so the modification time is used.
     """
-    manifest = Path(f"{local_path}{MULTIPART_MANIFEST_SUFFIX}")
+    manifest = multipart_manifest_path(local_path)
     try:
         manifest_written = manifest.stat().st_mtime_ns
     except FileNotFoundError:
@@ -250,7 +255,21 @@ class EbrainsDriveStorage:
             is_large = local_path.stat().st_size > EBRAINS_DRIVE_MULTIPART_THRESHOLD
             if is_large and can_write_in(local_path.parent):
                 discard_stale_manifest(local_path)
-                target.upload(str(local_path), url_path, timeout=self._timeout)
+                manifest = multipart_manifest_path(local_path)
+                had_manifest = manifest.is_file()
+                try:
+                    target.upload(str(local_path), url_path, timeout=self._timeout)
+                except ClientHttpError as error:
+                    # The manifest names the upload it resumes, but not the
+                    # bucket or object: one left by an upload of the file to
+                    # another bucket or object, or of an upload the store has
+                    # forgotten, is refused as unknown. The file is then sent
+                    # anew, rather than fail on every run until the manifest
+                    # is deleted by hand.
+                    if not (had_manifest and getattr(error, "code", None) == 404):
+                        raise
+                    manifest.unlink(missing_ok=True)
+                    target.upload(str(local_path), url_path, timeout=self._timeout)
             else:
                 with open(local_path, "rb") as file:
                     target.upload(file, url_path, timeout=self._timeout)
