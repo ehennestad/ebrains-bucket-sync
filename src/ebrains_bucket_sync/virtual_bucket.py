@@ -20,6 +20,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .local import give_file_mode
 from .model import FileEntry, PlanItem
 from .paths import is_safe_relative_path, normalize_prefix
 from .plan import TIME_TOLERANCE, Refusal
@@ -542,6 +543,7 @@ def write_atomically(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     handle, temporary = tempfile.mkstemp(dir=path.parent, prefix=path.name, suffix=".tmp")
     try:
+        give_file_mode(Path(temporary), path)
         with os.fdopen(handle, "w", encoding="utf-8", newline="") as file:
             file.write(text)
         os.replace(temporary, path)

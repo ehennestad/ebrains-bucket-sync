@@ -40,6 +40,7 @@ from .exclude import exclude_files
 from .local import (
     LocalListing,
     compute_md5,
+    give_file_mode,
     is_case_insensitive,
     is_link,
     local_file_entry,
@@ -533,6 +534,9 @@ def download_object(
     os.close(handle)
     temporary = Path(name)
     try:
+        # mkstemp makes the file readable to its owner only; the download
+        # must get the mode of the file it replaces, or that of a new file
+        give_file_mode(temporary, target)
         storage.download(bucket, object_name, temporary, on_progress=on_progress)
         size = temporary.stat().st_size
         if expected_bytes is not None and size != expected_bytes:

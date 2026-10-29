@@ -1,10 +1,13 @@
 import json
+import os
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 import jsonschema
 import pytest
 
+import ebrains_bucket_sync.local as local_module
 from ebrains_bucket_sync.model import FileEntry
 from ebrains_bucket_sync.virtual_bucket import (
     BucketInfo,
@@ -54,6 +57,20 @@ def test_never_listed_bucket_matches_schema(tmp_path):
     data = json.loads((tmp_path / ".ebrains" / "bucket.json").read_text())
     jsonschema.validate(data, SCHEMA)
     assert data["listed_at"] is None
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Needs POSIX file modes.")
+def test_metadata_files_get_the_mode_of_new_files(tmp_path, monkeypatch):
+    # They are written through a temporary file of mkstemp, which only
+    # its owner can read; a virtual bucket in a shared folder must stay
+    # readable to the group
+    monkeypatch.setattr(local_module, "_UMASK", 0o027)
+
+    write_bucket_info(tmp_path, BucketInfo("b", "", LISTED_AT))
+    write_manifest(tmp_path, [FileEntry("a.txt", 3)])
+
+    for name in ("bucket.json", "manifest.csv"):
+        assert oct(os.stat(tmp_path / ".ebrains" / name).st_mode & 0o777) == oct(0o640), name
 
 
 def test_folder_without_metadata_has_no_info_or_manifest(tmp_path):

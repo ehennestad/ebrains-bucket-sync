@@ -34,6 +34,27 @@ DOWNLOAD_CHUNK_SIZE = 1024 * 1024
 """Bytes read from a download at a time, and between two progress reports."""
 
 
+class _SessionWithTimeout(requests.Session):
+    """A session whose requests wait at most `timeout` seconds unless told otherwise.
+
+    ebrains_drive sends the listing of a bucket, the lookup of a bucket
+    and the requests for signed URLs through the session of its client
+    without a timeout, so a stalled connection would hang the sync
+    forever. The client's session is replaced with this one right after
+    the client is made, before any request.
+    """
+
+    def __init__(self, timeout: float) -> None:
+        super().__init__()
+        self.timeout = timeout
+
+    def request(  # type: ignore[override]  # requests names every keyword; all pass through
+        self, method: str, url: str | bytes, *args: Any, **kwargs: Any
+    ) -> requests.Response:
+        kwargs.setdefault("timeout", self.timeout)
+        return super().request(method, url, *args, **kwargs)
+
+
 class TokenSource(Protocol):
     """Where the storage gets an access token, and a fresh one when asked."""
 
@@ -285,6 +306,10 @@ class EbrainsDriveStorage:
 
     def _install_client(self, token: str) -> None:
         self._client = self._client_factory(token=token)
+        if isinstance(getattr(self._client, "session", None), requests.Session):
+            # ebrains_drive keeps no state in its session: no headers, no
+            # cookies, so a fresh one with a timeout can take its place
+            self._client.session = _SessionWithTimeout(self._timeout)
         self._buckets = {}
 
     def _bucket(self, client: Any, name: str) -> Any:
