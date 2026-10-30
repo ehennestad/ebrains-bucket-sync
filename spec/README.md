@@ -46,6 +46,15 @@ A dry run reports the refusal instead of stopping.
 
 Copies run first. Nothing is deleted after a copy failed, since a failure may mean the source was listed wrongly or the connection is lost. A failed copy does not stop the other copies, and is reported with its reason. Running the sync again retries it.
 
+## Case of names
+
+The bucket tells names apart that differ only in case; the default file systems of macOS and Windows do not. An implementation finds out whether the local folder of a sync ignores case, and where it does:
+
+- A sync from the bucket matches a local file and an object whose names differ only in case as one file, with the path of the object, and matches exclude patterns without regard to case. Of objects whose names differ from each other only in case it keeps one and leaves the others out, with a warning, since the folder cannot hold them apart.
+- A sync to the bucket matches names exactly, since the bucket tells them apart, but does not delete an object whose name differs only in case from a local file, whether or not an exclude pattern leaves that file out of the sync: the folder cannot hold the two apart, so a sync from the bucket keeps only one of them, and the object may be the only copy of its data. The row stays a deletion of the plan and is reported as skipped with the reason, with a warning, and does not count towards the deletions of [Refusal](#refusal).
+
+Paths are compared in lowercase.
+
 ## Exclude patterns
 
 Patterns are applied to both sides before planning, so excluded files are neither transferred nor deleted. `*` matches any characters except `/`, and `?` one character except `/`. `**` has the meaning it has in a `.gitignore` file where it is next to a `/`: `**/` at the start and `/**/` inside stand for any number of folders, none included, so `**/data` matches `data` at the root as well as `a/data`, and `logs/**/*.log` matches `logs/a.log`; `/**` at the end matches everything below a folder; elsewhere `**` matches any characters, `/` included. A pattern without `/` matches a path segment at any depth, and a matched folder excludes everything below it. A pattern with `/` inside it or in front of it is matched from the root of the synced folder, and also excludes everything below a matched folder, so `/build` excludes the `build` folder at the root but not `sub/build`. A trailing `/` is ignored.
@@ -127,6 +136,8 @@ The state of each path of a virtual bucket, sorted by path:
 `fixtures/exclude-file/*.json`: the `text` of a file, and either the `expected_patterns`, in order, or the `expected_error_line` of a refused file, counted from 1.
 
 `fixtures/refusal/*.json`: a `plan`, `n_source_files`, `max_delete` (null for no limit) and `expected_code` (null for no refusal).
+
+`fixtures/case-collision/*.json`: the `plan` of a sync to the bucket, the `local_paths`, and the `expected` rows of `path` and `local_path` for each deletion that collides in case with a local file, in plan order.
 
 `fixtures/manifest/*.json`: the `text` of a `manifest.csv` and either its `entries`, in order, or the `expected_error_line` of a refused text. Reading the text gives the entries, and writing the entries gives the text.
 

@@ -88,6 +88,27 @@ def match_key(ignore_case: bool) -> Callable[[str], str]:
     return str.lower if ignore_case else str
 
 
+def case_colliding_deletions(
+    plan: Iterable[PlanItem], local_paths: Iterable[str]
+) -> dict[str, str]:
+    """The deletions of a sync to the bucket of an object named like a local file in another case.
+
+    Returns the path of the local file by the path of each such plan row.
+    An upload matches names exactly, since the bucket tells names apart,
+    so such an object is extraneous to the plan. On a file system that
+    ignores case, the local folder cannot hold the object next to the
+    file, and a sync from the bucket keeps only one of the two, so the
+    object may be the only copy of its data. Whether the folder ignores
+    case is for the caller to decide (see local.is_case_insensitive).
+    """
+    local_by_key = {path.lower(): path for path in local_paths}
+    return {
+        item.path: local_by_key[item.path.lower()]
+        for item in plan
+        if item.action == "delete" and item.path.lower() in local_by_key
+    }
+
+
 def change_reason(
     source: FileEntry, target: FileEntry, comparison: str, time_tolerance: timedelta
 ) -> str:

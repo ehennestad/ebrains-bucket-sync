@@ -251,6 +251,88 @@ def test_stops_before_more_deletions_than_allowed(folder, storage: FakeStorage):
     assert storage.deleted == []
 
 
+def test_where_case_is_ignored_an_object_named_like_a_local_file_is_not_deleted(
+    folder, storage: FakeStorage
+):
+    write(folder, "data.txt", b"d")
+    storage.put("b", "data.txt", b"d")
+    storage.put("b", "Data.txt", b"other")
+    storage.put("b", "extra.txt", b"e")
+
+    with pytest.warns(SyncWarning, match="differs only in case from a local file"):
+        results = sync_to_bucket(
+            folder, "b", storage, SyncOptions(delete=True, max_delete=1), ignore_case=True
+        )
+
+    assert statuses(results) == {
+        "Data.txt": ("delete", "extraneous", "skipped"),
+        "data.txt": ("none", "unchanged", ""),
+        "extra.txt": ("delete", "extraneous", "done"),
+    }
+    assert results[0].message == (
+        "Not deleted, since the name differs only in case from the local file 'data.txt', "
+        "which the local folder cannot hold apart."
+    )
+    assert storage.deleted == [("b", "extra.txt")]
+
+
+def test_where_case_is_ignored_a_dry_run_shows_the_kept_object_as_skipped(
+    folder, storage: FakeStorage
+):
+    write(folder, "data.txt", b"d")
+    storage.put("b", "data.txt", b"d")
+    storage.put("b", "Data.txt", b"other")
+    storage.put("b", "extra.txt", b"e")
+
+    with pytest.warns(SyncWarning, match="differs only in case from a local file"):
+        results = sync_to_bucket(
+            folder, "b", storage, SyncOptions(delete=True, dry_run=True), ignore_case=True
+        )
+
+    assert statuses(results) == {
+        "Data.txt": ("delete", "extraneous", "skipped"),
+        "data.txt": ("none", "unchanged", ""),
+        "extra.txt": ("delete", "extraneous", "planned"),
+    }
+    assert storage.deleted == []
+
+
+def test_where_case_is_ignored_an_object_named_like_an_excluded_local_file_is_not_deleted(
+    folder, storage: FakeStorage
+):
+    # A push matches exclude patterns exactly, so the pattern leaves out the
+    # local file but not the object, which the folder cannot hold all the same
+    write(folder, "data.txt", b"local")
+    write(folder, "other.txt", b"o")
+    storage.put("b", "other.txt", b"o")
+    storage.put("b", "Data.txt", b"remote")
+
+    with pytest.warns(SyncWarning, match="differs only in case from a local file"):
+        results = sync_to_bucket(
+            folder,
+            "b",
+            storage,
+            SyncOptions(delete=True, exclude=["data.txt"]),
+            ignore_case=True,
+        )
+
+    assert statuses(results)["Data.txt"] == ("delete", "extraneous", "skipped")
+    assert storage.deleted == []
+
+
+def test_where_case_is_respected_an_object_named_like_a_local_file_is_deleted(
+    folder, storage: FakeStorage
+):
+    write(folder, "data.txt", b"d")
+    storage.put("b", "data.txt", b"d")
+    storage.put("b", "Data.txt", b"other")
+
+    results = sync_to_bucket(folder, "b", storage, SyncOptions(delete=True), ignore_case=False)
+
+    assert statuses(results)["Data.txt"] == ("delete", "extraneous", "done")
+    assert storage.deleted == [("b", "Data.txt")]
+
+
 def test_failed_upload_is_retried_then_holds_back_deletions(folder, storage: FakeStorage):
     write(folder, "bad.txt", b"b")
     write(folder, "good.txt", b"g")

@@ -11,7 +11,7 @@ from ebrains_bucket_sync.engine import never_synced, sync_from_bucket
 from ebrains_bucket_sync.exclude import ExcludeFileError, exclude_files, parse_exclude_file
 from ebrains_bucket_sync.local import LocalListing
 from ebrains_bucket_sync.model import FileEntry, PlanItem, SyncOptions
-from ebrains_bucket_sync.plan import deletion_refusal, plan_sync
+from ebrains_bucket_sync.plan import case_colliding_deletions, deletion_refusal, plan_sync
 from ebrains_bucket_sync.remote import parse_listing_time
 from ebrains_bucket_sync.virtual_bucket import (
     BucketInfo,
@@ -90,6 +90,15 @@ def test_refusal_fixture(case):
     refusal = deletion_refusal(plan, case["n_source_files"], max_delete)
 
     assert (refusal.code if refusal else None) == case["expected_code"]
+
+
+@pytest.mark.parametrize("case", load_cases("case-collision"))
+def test_case_collision_fixture(case):
+    plan = [PlanItem(**item) for item in case["plan"]]
+
+    collisions = case_colliding_deletions(plan, case["local_paths"])
+
+    assert collisions == {item["path"]: item["local_path"] for item in case["expected"]}
 
 
 def to_entries(items):
