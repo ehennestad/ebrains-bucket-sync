@@ -6,6 +6,7 @@ from pathlib import Path
 import jsonschema
 import pytest
 from click.testing import CliRunner
+from ebrains_drive.exceptions import ClientHttpError
 
 from ebrains_bucket_sync import cli
 from ebrains_bucket_sync.model import FileEntry
@@ -435,6 +436,44 @@ def test_pull_into_a_folder_that_cannot_be_created_is_an_error(runner, tmp_path,
     assert result.exit_code == 1
     assert isinstance(result.exception, SystemExit), "the error must be reported, not raised"
     assert "Error: [Errno" in result.output and "Permission denied" in result.output
+
+
+def test_a_request_the_data_proxy_refuses_is_an_error(runner, folder, fake_storage, monkeypatch):
+    # ebrains_drive raises a plain Exception for a bucket that does not exist
+    def refuse(bucket, prefix):
+        raise ClientHttpError(404, "Expected (200,), but got 404")
+
+    monkeypatch.setattr(fake_storage, "list_objects", refuse)
+
+    result = runner.invoke(cli.main, ["push", str(folder), "nosuchbucket"])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit), "the error must be reported, not raised"
+    assert "Error: The Data Proxy answered HTTP 404: Expected (200,), but got 404." in result.output
+    assert "The bucket may not exist" in result.output
+
+
+@pytest.mark.skipif(
+    os.name == "nt" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+    reason="Needs a folder the user cannot write to, which Windows and root do not give.",
+)
+def test_browse_of_a_folder_that_cannot_be_created_is_an_error(
+    runner, tmp_path, fake_storage, shown, page
+):
+    parent = tmp_path / "readonly"
+    parent.mkdir()
+    parent.chmod(0o500)
+    try:
+        result = runner.invoke(
+            cli.main, ["browse", str(parent / "new"), "--bucket", "b", "--page", str(page)]
+        )
+    finally:
+        parent.chmod(0o755)
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit), "the error must be reported, not raised"
+    assert "Error: [Errno" in result.output and "Permission denied" in result.output
+    assert shown == []
 
 
 def test_login_and_logout_use_the_authenticator(runner, monkeypatch):

@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
 import threading
 import time
 from datetime import datetime, timezone
@@ -18,6 +19,7 @@ from ebrains_bucket_sync.browser import (
     Host,
     VirtualBucket,
     bucket_web_url,
+    create_placeholders,
     default_page_path,
     format_duration,
     format_local_time,
@@ -40,6 +42,10 @@ from ebrains_bucket_sync.virtual_bucket import (
 )
 
 from .conftest import FakeStorage, md5_of, utc, write
+
+needs_symlinks = pytest.mark.skipif(
+    sys.platform == "win32", reason="Creating symbolic links needs a privilege on Windows."
+)
 
 LISTED_AT = utc(2024, 1, 2, 3, 4, 5)
 OBJECT_TIME = "2024-06-01T12:00:00"
@@ -410,6 +416,47 @@ def test_update_deletes_the_placeholders_of_removed_objects(folder, storage):
     assert page.state["message"] == (
         "Added placeholders for 0 new objects. Deleted the placeholders of 1 removed object."
     )
+
+
+def test_update_records_the_listing_when_a_file_is_in_the_way_of_a_placeholder(folder, storage):
+    # A local file "a" sits where the folder of "a/b.txt" must go; the
+    # other objects get their placeholders and the manifest knows them all
+    make_virtual_bucket(folder, "b")
+    write(folder, "a", b"local")
+    storage.put("b", "a/b.txt", b"xyz", last_modified=OBJECT_TIME)
+    storage.put("b", "c.txt", b"xyz", last_modified=OBJECT_TIME)
+    host, page = make_host(folder, storage)
+
+    request(host, "update")
+
+    assert page.alerts == []
+    assert (folder / "a").read_bytes() == b"local"
+    assert (folder / "c.txt").read_bytes() == b""
+    assert [entry.path for entry in read_manifest(folder)] == ["a/b.txt", "c.txt"]
+    assert page.state["message"] == (
+        "Added placeholders for 1 new object. 1 object got no placeholder, since a file or "
+        'folder of the folder is in the way, for example "a/b.txt".'
+    )
+
+
+def test_create_placeholders_leaves_what_is_in_the_way(folder):
+    write(folder, "a", b"local")
+    write(folder, "kept.dat", b"kept")
+    (folder / "dir.dat").mkdir()
+
+    without = create_placeholders(folder, ["a/b.txt", "kept.dat", "dir.dat", "new/c.txt"])
+
+    assert without == ["a/b.txt", "dir.dat"]
+    assert (folder / "kept.dat").read_bytes() == b"kept"
+    assert (folder / "new" / "c.txt").read_bytes() == b""
+
+
+@needs_symlinks
+def test_create_placeholders_does_not_follow_a_dangling_link(folder, tmp_path):
+    (folder / "x.dat").symlink_to(tmp_path / "missing")
+
+    assert create_placeholders(folder, ["x.dat"]) == ["x.dat"]
+    assert not (tmp_path / "missing").exists()
 
 
 def test_update_keeps_the_entry_of_a_placeholder_it_cannot_delete(folder, storage, monkeypatch):
@@ -802,6 +849,23 @@ def test_download_discards_the_download_of_a_file_edited_meanwhile(folder):
     assert page.alerts == [("Download stopped", "error")]
     assert "changed while the object was downloaded" in page.named("alert")[0]["message"]
     assert host.bucket.row("a.txt").state == "differs"
+
+
+@needs_symlinks
+def test_online_only_refuses_a_symbolic_link_and_keeps_its_target(folder, storage, tmp_path):
+    # Opening the link for writing would empty the file it points to
+    outside = write(tmp_path, "precious.txt", b"precious")
+    (folder / "link.dat").symlink_to(outside)
+    make_virtual_bucket(folder, "b", manifest=[FileEntry("link.dat", 8, OBJECT_TIME_UTC)])
+    os.utime(outside, (OBJECT_TIME_UTC.timestamp(), OBJECT_TIME_UTC.timestamp()))
+    host, page = make_host(folder, storage)
+
+    request(host, "onlineOnly", paths=["link.dat"])
+
+    assert outside.read_bytes() == b"precious"
+    assert (folder / "link.dat").is_symlink()
+    assert page.alerts == [("Could not make the files online only", "error")]
+    assert "symbolic link" in page.named("alert")[0]["message"]
 
 
 def test_replace_with_placeholders_refuses_a_file_that_changed_since_it_was_read(folder):

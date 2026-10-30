@@ -428,7 +428,10 @@ class Host:
             self.bucket.scan()
             local_paths = {entry.path for entry in self.bucket.local_files}
             new_paths = [entry.path for entry in entries if entry.path not in local_paths]
-            create_placeholders(self.bucket.folder, new_paths)
+            # A path that something else is in the way of gets no
+            # placeholder; the listing is recorded all the same, so the
+            # manifest knows the object and the next update tries again
+            without_placeholder = create_placeholders(self.bucket.folder, new_paths)
             removed = placeholders_of_removed_objects(
                 self.bucket.local_files, entries, self.bucket.manifest
             )
@@ -439,7 +442,14 @@ class Host:
             self.bucket.record_listing(
                 sorted(entries + kept_entries, key=lambda entry: entry.path), listed_at
             )
-            message = f"Added placeholders for {count_text(len(new_paths), 'new object')}."
+            n_added = len(new_paths) - len(without_placeholder)
+            message = f"Added placeholders for {count_text(n_added, 'new object')}."
+            if without_placeholder:
+                message += (
+                    f" {count_text(len(without_placeholder), 'object')} got no placeholder, "
+                    "since a file or folder of the folder is in the way, for example "
+                    f'"{without_placeholder[0]}".'
+                )
             n_deleted = len(removed) - len(kept_entries)
             if n_deleted > 0:
                 message += (
@@ -765,17 +775,28 @@ def _synced_entries(entries: Iterable[FileEntry]) -> list[FileEntry]:
     return [entry for entry in entries if not never_synced(entry.path)]
 
 
-def create_placeholders(root: Path, paths: Iterable[str]) -> None:
-    """Create an empty file for each path below root, and the folders of the paths.
+def create_placeholders(root: Path, paths: Iterable[str]) -> list[str]:
+    """Create an empty file for each path below root, and give the paths that got none.
 
-    A file that exists is kept: it may hold downloaded data.
+    A file that exists is kept: it may hold downloaded data. A path gets
+    no placeholder when something else is in its way: a folder or a
+    symbolic link at the path, which the empty file must not be created
+    through, or a file where a folder of the path must go. Such a path is
+    returned, and the other paths get their placeholders.
     """
+    without_placeholder = []
     for path in paths:
         file_path = Path(root) / path
         if file_path.is_file():
             continue
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        file_path.touch()
+        try:
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            # Creating the file anew, rather than touching whatever is at
+            # the path, fails on a dangling link instead of following it
+            file_path.touch(exist_ok=False)
+        except OSError:
+            without_placeholder.append(path)
+    return without_placeholder
 
 
 def delete_placeholders(root: Path, paths: Iterable[str]) -> set[str]:
@@ -811,6 +832,13 @@ def replace_with_placeholders(root: Path, files: Iterable[FileEntry]) -> None:
     files = list(files)
     for entry in files:
         file_path = Path(root) / entry.path
+        if file_path.is_symlink():
+            # Opening the link for writing would empty the file it points
+            # to, which is not the virtual bucket's to discard
+            raise OSError(
+                f'"{file_path}" is a symbolic link to a file elsewhere, which cannot be made '
+                "online only, so no file was. Remove the link to make the object online only."
+            )
         current = local_file_entry(root, entry.path)
         if current is None:
             raise FileNotFoundError(

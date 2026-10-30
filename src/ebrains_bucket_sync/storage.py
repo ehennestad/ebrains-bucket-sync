@@ -78,6 +78,33 @@ def is_auth_error(error: BaseException) -> bool:
     return isinstance(error, ClientHttpError) and getattr(error, "code", None) == 401
 
 
+def request_error_message(error: BaseException) -> str | None:
+    """What to tell the user about a request the Data Proxy refused, or None for another error.
+
+    ebrains_drive raises ClientHttpError, a plain Exception that carries
+    its text in `message` rather than in str(), for a status it did not
+    expect, and Unauthorized or TokenExpired for a 401. A command reports
+    these as errors rather than tracebacks.
+    """
+    if isinstance(error, (Unauthorized, TokenExpired)):
+        return (
+            "The Data Proxy refused the request as unauthorized, also with a renewed login. "
+            "Check that the account is a member of the collab of the bucket."
+        )
+    if not isinstance(error, ClientHttpError):
+        return None
+    code = getattr(error, "code", None)
+    detail = getattr(error, "message", None) or str(error)
+    hints = {
+        401: "Log in again with `ebrains-bucket-sync login --force`.",
+        403: "The account is not allowed to do this with the bucket.",
+        404: "The bucket may not exist, or the account may not be a member of its collab.",
+    }
+    message = f"The Data Proxy answered HTTP {code}" + (f": {detail}" if detail else "") + "."
+    hint = hints.get(code) if isinstance(code, int) else None
+    return message + (f" {hint}" if hint else "")
+
+
 def is_transient_error(error: BaseException) -> bool:
     """Whether a failed request may well succeed when sent again."""
     if isinstance(error, (requests.RequestException, ConnectionError, TimeoutError)):
