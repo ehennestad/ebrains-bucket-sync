@@ -297,6 +297,29 @@ def test_where_case_is_ignored_a_dry_run_shows_the_kept_object_as_skipped(
     assert storage.deleted == []
 
 
+def test_where_case_is_ignored_an_object_named_like_an_excluded_local_file_is_not_deleted(
+    folder, storage: FakeStorage
+):
+    # A push matches exclude patterns exactly, so the pattern leaves out the
+    # local file but not the object, which the folder cannot hold all the same
+    write(folder, "data.txt", b"local")
+    write(folder, "other.txt", b"o")
+    storage.put("b", "other.txt", b"o")
+    storage.put("b", "Data.txt", b"remote")
+
+    with pytest.warns(SyncWarning, match="differs only in case from a local file"):
+        results = sync_to_bucket(
+            folder,
+            "b",
+            storage,
+            SyncOptions(delete=True, exclude=["data.txt"]),
+            ignore_case=True,
+        )
+
+    assert statuses(results)["Data.txt"] == ("delete", "extraneous", "skipped")
+    assert storage.deleted == []
+
+
 def test_where_case_is_respected_an_object_named_like_a_local_file_is_deleted(
     folder, storage: FakeStorage
 ):

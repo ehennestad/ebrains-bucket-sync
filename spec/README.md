@@ -51,7 +51,7 @@ Copies run first. Nothing is deleted after a copy failed, since a failure may me
 The bucket tells names apart that differ only in case; the default file systems of macOS and Windows do not. An implementation finds out whether the local folder of a sync ignores case, and where it does:
 
 - A sync from the bucket matches a local file and an object whose names differ only in case as one file, with the path of the object, and matches exclude patterns without regard to case. Of objects whose names differ from each other only in case it keeps one and leaves the others out, with a warning, since the folder cannot hold them apart.
-- A sync to the bucket matches names exactly, since the bucket tells them apart, but does not delete an object whose name differs only in case from a local file: the folder cannot hold the two apart, so a sync from the bucket keeps only one of them, and the object may be the only copy of its data. The row stays a deletion of the plan and is reported as skipped with the reason, with a warning, and does not count towards the deletions of [Refusal](#refusal).
+- A sync to the bucket matches names exactly, since the bucket tells them apart, but does not delete an object whose name differs only in case from a local file, whether or not an exclude pattern leaves that file out of the sync: the folder cannot hold the two apart, so a sync from the bucket keeps only one of them, and the object may be the only copy of its data. The row stays a deletion of the plan and is reported as skipped with the reason, with a warning, and does not count towards the deletions of [Refusal](#refusal).
 
 Paths are compared in lowercase.
 

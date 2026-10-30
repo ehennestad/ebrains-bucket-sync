@@ -198,9 +198,9 @@ def sync_to_bucket(
     case of names; None probes it (see local.is_case_insensitive). Names
     are matched exactly all the same, since the bucket tells them apart,
     but where case is ignored an object whose name differs only in case
-    from a local file is not deleted: it is reported as skipped, with a
-    warning, and does not count towards options.max_delete (see
-    plan.case_colliding_deletions).
+    from a local file, excluded or not, is not deleted: it is reported as
+    skipped, with a warning, and does not count towards
+    options.max_delete (see plan.case_colliding_deletions).
 
     A failed upload is tried again up to `attempts` times in all when the
     error looks transient, waiting retry_wait seconds, doubled each time.
@@ -254,13 +254,16 @@ def sync_to_bucket(
 
     # Where the local folder ignores case, an object whose name differs only
     # in case from a local file is kept: the folder cannot hold the two
-    # apart, so the object may be the only copy of its data.
+    # apart, so the object may be the only copy of its data. An excluded
+    # file counts too, since it takes up the name all the same.
     if ignore_case is None:
         ignore_case = is_case_insensitive(
             local_folder, [entry.path for entry in local_listing.files]
         )
     collisions = (
-        case_colliding_deletions(plan, [entry.path for entry in local_files]) if ignore_case else {}
+        case_colliding_deletions(plan, [entry.path for entry in unexcluded_local_files])
+        if ignore_case
+        else {}
     )
     if collisions:
         warnings.warn(
