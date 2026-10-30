@@ -14,7 +14,7 @@ import click
 
 from .auth import AuthError, DeviceFlowAuthenticator
 from .browser import ENV_PAGE, VirtualBucket, default_page_path, show_browser
-from .engine import SyncEvent, SyncRefused, sync_from_bucket, sync_to_bucket
+from .engine import SyncEvent, SyncRefused, is_case_collision, sync_from_bucket, sync_to_bucket
 from .exclude import ExcludeFileError, read_exclude_file
 from .model import COMPARISONS, ActionResult, BucketStorage, SyncOptions, SyncWarning
 from .paths import InvalidPrefixError, normalize_prefix
@@ -385,7 +385,8 @@ class ConsolePrinter:
     def _on_planned(self, event: SyncEvent) -> None:
         self.results = list(event.results)
         copies = [r for r in event.results if r.action == self._copy_action]
-        deletions = [r for r in event.results if r.action == "delete"]
+        # A deletion kept for a case collision is explained by its warning
+        deletions = [r for r in event.results if r.action == "delete" and not is_case_collision(r)]
         unchanged = sum(1 for r in event.results if r.reason == "unchanged")
         kept = sum(1 for r in event.results if r.reason == "extraneous" and r.action != "delete")
         placeholders = sum(1 for r in event.results if r.reason == "placeholder")

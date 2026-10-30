@@ -55,7 +55,7 @@ from .model import (
     SyncWarning,
 )
 from .paths import DOWNLOAD_PART_SUFFIX, is_transfer_leftover, normalize_prefix
-from .plan import deletion_refusal, match_key, plan_sync
+from .plan import case_colliding_deletions, deletion_refusal, match_key, plan_sync
 from .remote import list_remote_files
 from .storage import is_transient_error
 from .virtual_bucket import (
@@ -148,6 +148,22 @@ class SyncEvent:
 
 EventHandler = Callable[[SyncEvent], None]
 
+CASE_COLLISION_MESSAGE = "Not deleted, since the name differs only in case from the local file"
+"""Start of the message of a deletion that a sync to the bucket skips for a case collision."""
+
+
+def is_case_collision(result: ActionResult) -> bool:
+    """Whether a sync to the bucket keeps the object of a planned deletion for a case collision.
+
+    Such a row stays a deletion of the plan but is skipped from the start,
+    so a summary of the plan leaves it out of the deletions.
+    """
+    return (
+        result.action == "delete"
+        and result.status == "skipped"
+        and result.message.startswith(CASE_COLLISION_MESSAGE)
+    )
+
 
 def sync_to_bucket(
     local_folder: str | os.PathLike[str],
@@ -160,6 +176,7 @@ def sync_to_bucket(
     retry_wait: float = 1.0,
     sleep: Callable[[float], None] = time.sleep,
     md5: Callable[[Path], str] = compute_md5,
+    ignore_case: bool | None = None,
 ) -> list[ActionResult]:
     """Upload the files of local_folder that the bucket lacks or that changed.
 
@@ -176,6 +193,14 @@ def sync_to_bucket(
     would take their objects for extraneous. Raises NotADirectoryError
     when local_folder is not a folder and PermissionError when it cannot
     be read.
+
+    ignore_case says whether the file system of local_folder ignores the
+    case of names; None probes it (see local.is_case_insensitive). Names
+    are matched exactly all the same, since the bucket tells them apart,
+    but where case is ignored an object whose name differs only in case
+    from a local file is not deleted: it is reported as skipped, with a
+    warning, and does not count towards options.max_delete (see
+    plan.case_colliding_deletions).
 
     A failed upload is tried again up to `attempts` times in all when the
     error looks transient, waiting retry_wait seconds, doubled each time.
@@ -226,13 +251,46 @@ def sync_to_bucket(
         # placeholder of an object removed since is not uploaded as a new
         # empty object.
         plan = protect_placeholders(plan, local_files, listing, manifest)
+
+    # Where the local folder ignores case, an object whose name differs only
+    # in case from a local file is kept: the folder cannot hold the two
+    # apart, so the object may be the only copy of its data.
+    if ignore_case is None:
+        ignore_case = is_case_insensitive(
+            local_folder, [entry.path for entry in local_listing.files]
+        )
+    collisions = (
+        case_colliding_deletions(plan, [entry.path for entry in local_files]) if ignore_case else {}
+    )
+    if collisions:
+        warnings.warn(
+            f"{len(collisions)} object(s) of {describe(bucket, prefix)} have a name that differs "
+            "only in case from a local file, which the local folder cannot hold apart, for "
+            f"example {next(iter(collisions))!r}. They are not deleted.",
+            SyncWarning,
+            stacklevel=2,
+        )
     results = [
         ActionResult(item.path, _ACTION_NAMES[item.action], item.reason, item.bytes)
         for item in plan
     ]
-    refusal = other_bucket or deletion_refusal(plan, len(local_files), options.max_delete)
+    for result in results:
+        if result.path in collisions:
+            result.status = "skipped"
+            result.message = (
+                f"{CASE_COLLISION_MESSAGE} {collisions[result.path]!r}, "
+                "which the local folder cannot hold apart."
+            )
+    plan_without_collisions = [item for item in plan if item.path not in collisions]
+    refusal = other_bucket or deletion_refusal(
+        plan_without_collisions, len(local_files), options.max_delete
+    )
     upload_indices = [k for k, result in enumerate(results) if result.action == "upload"]
-    delete_indices = [k for k, result in enumerate(results) if result.action == "delete"]
+    delete_indices = [
+        k
+        for k, result in enumerate(results)
+        if result.action == "delete" and result.path not in collisions
+    ]
 
     if options.dry_run:
         # A dry run shows the plan, a refusal included, rather than stop. A

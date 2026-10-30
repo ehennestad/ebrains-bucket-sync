@@ -8,7 +8,7 @@ import pytest
 from click.testing import CliRunner
 from ebrains_drive.exceptions import ClientHttpError
 
-from ebrains_bucket_sync import cli
+from ebrains_bucket_sync import cli, engine
 from ebrains_bucket_sync.model import FileEntry
 from ebrains_bucket_sync.virtual_bucket import (
     BucketInfo,
@@ -55,6 +55,24 @@ def test_push_uploads_and_reports(runner, folder, fake_storage):
     assert "[1/1] Upload a.txt (3 B)" in result.output
     assert "Done: 1 uploaded, 0 deleted, 0 failed." in result.output
     assert fake_storage.uploaded == [("b", "results/a.txt")]
+
+
+def test_push_leaves_an_object_kept_for_a_case_collision_out_of_the_deletions(
+    runner, folder, fake_storage, monkeypatch
+):
+    monkeypatch.setattr(engine, "is_case_insensitive", lambda root, paths: True)
+    write(folder, "data.txt", b"d")
+    fake_storage.put("b", "data.txt", b"d")
+    fake_storage.put("b", "Data.txt", b"other")
+    fake_storage.put("b", "extra.txt", b"e")
+
+    result = runner.invoke(cli.main, ["push", str(folder), "b", "--delete", "--dry-run"])
+
+    assert result.exit_code == 0, result.output
+    assert "0 file(s) to upload (0 B), 1 to delete, 1 unchanged." in result.output
+    assert "Warning: 1 object(s)" in result.output
+    assert "[dry-run] Delete extra.txt (extraneous)" in result.output
+    assert "Delete Data.txt" not in result.output
 
 
 @pytest.mark.parametrize("prefix", ["../set", "C:/set"])
