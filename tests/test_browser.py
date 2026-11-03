@@ -1075,7 +1075,7 @@ def record(folder, bucket, prefix="", opened_at=LISTED_AT):
 
 
 def set_root(root):
-    update_registry(lambda registry: setattr(registry, "root", str(root)))
+    update_registry(lambda registry: registry.set_root(root))
 
 
 def listed_rows(page):

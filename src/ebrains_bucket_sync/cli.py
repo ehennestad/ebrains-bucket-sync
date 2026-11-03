@@ -452,8 +452,7 @@ def buckets_root(folder: Path | None, clear: bool) -> None:
         root = _read_registry().root
         click.echo(normalize_path(root) if root else "No root folder is set.")
         return
-    root = None if clear else normalize_path(folder)
-    _update_registry(lambda registry: setattr(registry, "root", root))
+    _update_registry(lambda registry: registry.set_root(None if clear else folder))
 
 
 def _read_registry() -> Registry:

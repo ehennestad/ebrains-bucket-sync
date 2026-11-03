@@ -431,8 +431,7 @@ class Host:
         elif name == "chooseRoot":
             folder = self._ask_for_folder("Choose the folder where new virtual buckets are made")
             if folder:
-                root = normalize_path(folder)
-                self._change_list(lambda registry: setattr(registry, "root", root))
+                self._change_list(lambda registry: registry.set_root(folder))
         elif name == "setLabel":
             bucket, label = str(payload["bucket"]), str(payload["label"])
             self._change_list(lambda registry: registry.set_label(bucket, label))
