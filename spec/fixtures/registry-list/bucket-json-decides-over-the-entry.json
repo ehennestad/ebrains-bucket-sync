@@ -23,12 +23,13 @@
     ]
   },
   "root_children": [],
-  "present": {
-    "/x": {
+  "present": [
+    {
+      "path": "/x",
       "bucket": "new",
       "prefix": ""
     }
-  },
+  ],
   "expected": [
     {
       "path": "/x",

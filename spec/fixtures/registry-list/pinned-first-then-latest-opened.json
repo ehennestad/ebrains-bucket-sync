@@ -45,24 +45,28 @@
     "/r/d-3",
     "/r/notes"
   ],
-  "present": {
-    "/r/d-1": {
+  "present": [
+    {
+      "path": "/r/d-1",
       "bucket": "d-1",
       "prefix": ""
     },
-    "/r/d-2": {
+    {
+      "path": "/r/d-2",
       "bucket": "d-2",
       "prefix": "results/"
     },
-    "/r/d-3": {
+    {
+      "path": "/r/d-3",
       "bucket": "d-3",
       "prefix": ""
     },
-    "/elsewhere/old": {
+    {
+      "path": "/elsewhere/old",
       "bucket": "old-bucket",
       "prefix": ""
     }
-  },
+  ],
   "expected": [
     {
       "path": "/elsewhere/old",

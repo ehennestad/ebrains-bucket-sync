@@ -186,7 +186,7 @@ The root is where an implementation makes a new virtual bucket by default. The n
 
 `fixtures/registry/*.json`: the `text` of a `virtual-buckets.json` and either its `registry` (`root`, `buckets` and `folders`) or `expected_error: true` for a refused text. Reading the text gives the registry, and reading the text that writing the registry gives, the same registry.
 
-`fixtures/registry-list/*.json`: a `registry`, the paths of the `root_children`, `present`: the `bucket` and `prefix` of each path whose `bucket.json` can be read, and the `expected` rows, in order.
+`fixtures/registry-list/*.json`: a `registry`, the paths of the `root_children`, `present`: one entry per path whose `bucket.json` can be read, with its `path`, `bucket` and `prefix`, and the `expected` rows, in order.
 
 ## Plan file
 

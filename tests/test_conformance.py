@@ -186,7 +186,7 @@ def registry_data(registry):
 @pytest.mark.parametrize("case", load_cases("registry-list"))
 def test_registry_list_fixture(case):
     registry = parse_registry(json.dumps(case["registry"] | {"format_version": 1}))
-    present = case["present"]
+    present = {item["path"]: item for item in case["present"]}
 
     def info_of(path):
         return (present[path]["bucket"], present[path]["prefix"]) if path in present else None

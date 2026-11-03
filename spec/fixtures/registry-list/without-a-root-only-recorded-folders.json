@@ -28,16 +28,18 @@
     ]
   },
   "root_children": [],
-  "present": {
-    "/a": {
+  "present": [
+    {
+      "path": "/a",
       "bucket": "a",
       "prefix": ""
     },
-    "/b": {
+    {
+      "path": "/b",
       "bucket": "b",
       "prefix": ""
     }
-  },
+  ],
   "expected": [
     {
       "path": "/a",
