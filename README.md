@@ -95,7 +95,7 @@ results = sync_from_bucket("my-bucket", "data", storage, SyncOptions(prefix="res
 
 `ebrains-bucket-sync login` logs in, `login --force` logs in again even when a valid login is stored, and `ebrains-bucket-sync logout` forgets the stored login.
 
-The login uses the OAuth device flow with the same OIDC client as the [MATLAB toolbox](https://github.com/ehennestad/EBRAINS-MATLAB), so both tools show up as one application in your EBRAINS account. The tokens are kept in the user's configuration folder, in a file only the user can read, and the access token is renewed from the refresh token without a new login for as long as the refresh token lasts. In CI, set `EBRAINS_BUCKET_SYNC_TOKEN` to an access token instead.
+The login uses the OAuth device flow with the same OIDC client as the [MATLAB toolbox](https://github.com/ehennestad/EBRAINS-MATLAB), so both tools show up as one application in your EBRAINS account. The tokens are kept in the configuration folder of the user, `~/Library/Application Support/ebrains-bucket-sync` on macOS, `%LOCALAPPDATA%\ebrains-bucket-sync` on Windows and `~/.config/ebrains-bucket-sync` elsewhere, as [spec/README.md](https://github.com/ehennestad/ebrains-bucket-sync/blob/main/spec/README.md#configuration-folder) defines it, in a file only the user can read, and the access token is renewed from the refresh token without a new login for as long as the refresh token lasts. In CI, set `EBRAINS_BUCKET_SYNC_TOKEN` to an access token instead. `EBRAINS_BUCKET_SYNC_CONFIG_DIR` names another configuration folder.
 
 ## Development
 
