@@ -21,7 +21,8 @@ from pathlib import Path
 from typing import Any
 
 import requests
-from platformdirs import user_config_dir
+
+from .config import config_dir
 
 IAM_BASE_URL = "https://iam.ebrains.eu/auth/realms/hbp/"
 CLIENT_ID = "ebrains-services-toolbox-matlab"
@@ -76,7 +77,7 @@ class TokenStore:
     """The tokens of the user, in a file only the user can read."""
 
     def __init__(self, path: Path | None = None) -> None:
-        self.path = path or Path(user_config_dir("ebrains-bucket-sync")) / "tokens.json"
+        self.path = path or config_dir() / "tokens.json"
 
     def load(self) -> TokenSet | None:
         try:

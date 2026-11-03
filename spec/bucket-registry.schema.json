@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ehennestad/ebrains-bucket-sync/spec/bucket-registry.schema.json",
+  "title": "Virtual bucket registry",
+  "description": "The virtual-buckets.json file of a user: the folders opened as virtual buckets, the labels of buckets, and the root folder where new virtual buckets are made.",
+  "type": "object",
+  "properties": {
+    "format_version": {
+      "description": "Version of the layout of the file. An implementation refuses a version greater than the one it knows.",
+      "const": 1
+    },
+    "root": {
+      "description": "Absolute path of the folder where new virtual buckets are made, as the operating system writes paths, or null when none is set.",
+      "type": ["string", "null"],
+      "minLength": 1
+    },
+    "buckets": {
+      "description": "One entry per bucket that has a label. A bucket appears at most once.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "bucket": {
+            "description": "Name of the bucket.",
+            "type": "string",
+            "minLength": 1
+          },
+          "label": {
+            "description": "The user's own name for the bucket.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": ["bucket", "label"],
+        "additionalProperties": true
+      }
+    },
+    "folders": {
+      "description": "One entry per recorded folder. A path appears at most once.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "description": "Absolute path of the folder, as the operating system writes paths.",
+            "type": "string",
+            "minLength": 1
+          },
+          "bucket": {
+            "description": "Name of the bucket the folder stood for when it was last recorded.",
+            "type": "string",
+            "minLength": 1
+          },
+          "prefix": {
+            "description": "Prefix the folder stood for when it was last recorded, in the form of bucket.json.",
+            "type": "string",
+            "pattern": "^$|^(?![A-Za-z]:)((?!\\.\\.?/)[^/\\\\]+/)+$"
+          },
+          "pinned": {
+            "description": "Whether the user pinned the folder to the top of the list.",
+            "type": "boolean"
+          },
+          "last_opened": {
+            "description": "When the folder was last opened, in UTC, or null when it was recorded without being opened.",
+            "type": ["string", "null"],
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+          }
+        },
+        "required": ["path", "bucket", "prefix", "pinned", "last_opened"],
+        "additionalProperties": true
+      }
+    }
+  },
+  "required": ["format_version", "root", "buckets", "folders"],
+  "additionalProperties": true
+}

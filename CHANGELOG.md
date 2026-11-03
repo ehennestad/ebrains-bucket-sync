@@ -14,12 +14,15 @@ The notable changes of each release. The GitHub release of a version carries the
 - `push` of a virtual bucket is refused unless the bucket and `--prefix` are the ones it stands for, leaves the placeholders alone, never uploads an empty placeholder as a new object, and records the listing it made, with the MD5 checksum of each uploaded file, as the manifest in `.ebrains` (8877c9e, 0b9664f, dc9e701, b9d3bb3).
 - `--exclude-from FILE` reads exclude patterns from a file in the layout of a `.gitignore` file, and `templates/dataset.ignore` lists the files that do not belong in a published dataset (0e7e130).
 - The storage reports the progress of a listing, which the browser shows for buckets of many objects (78f34d3).
+- The contract gains a registry of virtual buckets, `virtual-buckets.json` in the configuration folder: the folders opened as virtual buckets, a label for each bucket the user has named, and the root folder where new virtual buckets are made, with the rules for listing them (`spec/README.md#virtual-bucket-registry`, `bucket-registry.schema.json` and the `registry` and `registry-list` fixtures). `ebrains_bucket_sync.registry` reads, writes and lists it.
+- `browse` without a folder opens the list of your virtual buckets, with a filter, pinned folders first and a label per bucket, from which a virtual bucket is opened or a new one made from the name of its bucket once a root folder is set; a bucket view goes back to the list. Opening a folder, in the browser or with `browse FOLDER`, records it in the list. The `buckets` commands (`list`, `label`, `pin`, `unpin`, `forget`, `root`) manage the list from the command line.
 
 ### Changed
 
 - `**` next to a `/` and a leading `/` in an exclude pattern have their `.gitignore` meaning: `**/data` matches `data` at any depth, `logs/**/*.log` crosses folders, and `/build` is anchored to the root. The remaining differences from `.gitignore` are listed in `spec/README.md` (aabe3b0, c6a4f4e).
 - The `.ebrains` folder of a virtual bucket is never synced, in any case of its name, and neither are the files of interrupted transfers, whose names end in `.sync-part` or `.multipart_manifest.json` (910eaad, 57fb6d2).
 - The recommended install is `pipx install ebrains-bucket-sync`; the other ways are in `docs/install.md` (https://github.com/ehennestad/ebrains-bucket-sync/pull/13).
+- The configuration folder that holds the login is the one the contract defines (`spec/README.md#configuration-folder`), so that the MATLAB toolbox can keep its files in the same place: `~/Library/Application Support/ebrains-bucket-sync` on macOS, `%LOCALAPPDATA%\ebrains-bucket-sync` on Windows and `$XDG_CONFIG_HOME/ebrains-bucket-sync` or `~/.config/ebrains-bucket-sync` elsewhere, or the folder `EBRAINS_BUCKET_SYNC_CONFIG_DIR` names. On Windows the login was kept one folder deeper, under a second `ebrains-bucket-sync`, and is asked for again. The package no longer depends on platformdirs.
 
 ### Fixed
 

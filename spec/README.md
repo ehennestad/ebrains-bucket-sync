@@ -127,6 +127,43 @@ The state of each path of a virtual bucket, sorted by path:
      3. Otherwise, where the manifest entry has a `hash`, the MD5 checksum of the local file decides: `downloaded` where the two are equal, and `differs` where not. The checksum is computed only for these files. A pushed file has an unknown time in the manifest until the next listing, and the time of its upload after it, which is later than the local file, so its checksum tells whether it was changed since.
      4. Otherwise, times that are both known: `differs`. A local file changed after it was downloaded is later than its object, and its changes exist only there. An unknown time leaves the file `downloaded`, as in a plan.
 
+## Virtual bucket registry
+
+A user keeps virtual buckets in several folders, and a bucket is often named by a UUID. The registry is one file per user that records the folders opened as virtual buckets, a label for each bucket the user has named, and the root folder where new virtual buckets are made. An implementation that lists virtual buckets, as a browser does when it opens without a folder, makes the list from it.
+
+### Configuration folder
+
+The registry, and the other files an implementation keeps for a user, are in the configuration folder:
+
+| platform | folder |
+|---|---|
+| macOS | `~/Library/Application Support/ebrains-bucket-sync` |
+| Windows | `%LOCALAPPDATA%\ebrains-bucket-sync`, with `%USERPROFILE%\AppData\Local` where `LOCALAPPDATA` is not set or empty |
+| other | `$XDG_CONFIG_HOME/ebrains-bucket-sync`, with `~/.config` where `XDG_CONFIG_HOME` is not set or empty |
+
+`~` is the home folder of the user. The environment variable `EBRAINS_BUCKET_SYNC_CONFIG_DIR`, when set and not empty, names the folder instead, as an absolute path, for tests and for a machine where the folder above is not the user's own; a relative path is refused, since each process would read it against its own working folder. The folder is created when a file is first written to it.
+
+### The registry file
+
+`virtual-buckets.json` in the configuration folder is UTF-8 JSON, as `bucket-registry.schema.json` describes, with:
+
+- `format_version`: the integer 1.
+- `root`: the path of the folder where new virtual buckets are made, written as paths are recorded (below), or null when none is set.
+- `buckets`: one entry per bucket that has a label, with the `bucket` and the `label`, text of at least one character. A bucket appears at most once. A label is the user's own name for a bucket, shown beside its name wherever the bucket is listed. It names the bucket, so it applies to every folder of it.
+- `folders`: one entry per recorded folder, with its `path`; the `bucket` and `prefix` the folder stood for when it was last recorded, in the form of `bucket.json`; `pinned`; and `last_opened`, when the folder was last opened, as `YYYY-MM-DDTHH:MM:SSZ` in UTC, to the second, or null when it was recorded without being opened. A path appears at most once.
+
+A path is recorded as the absolute path of the folder as the operating system writes it: with the separator of the system, without a trailing separator and without `.` or `..` segments, and without resolving links, so that a folder below a root that is a link is the same folder as the one a scan of the root finds. Two paths are the same folder when they are equal as text.
+
+A file that is missing is an empty registry: no root, no labels and no folders. An implementation refuses a file that does not follow the schema, that has a bucket twice in `buckets` or a path twice in `folders`, or whose `format_version` is greater than the one it knows, as it refuses a `bucket.json`; the error names the file. A file that cannot be read for another reason is refused with the same kind of error. Fields that an implementation does not know are dropped when it writes the file. The file is written in full to a temporary file and renamed over the old one, as the files of `.ebrains` are, with the `buckets` sorted by `bucket` and the `folders` by `path`, in Unicode code point order.
+
+Opening a folder as a virtual bucket, in a browser or by making one, records it: the entry of its path gets the `bucket` and `prefix` of its `bucket.json` and the time, and keeps its `pinned`; a path without an entry gets one with `pinned` false. Pinning a folder that has no entry records it without a time, with the `bucket` and `prefix` of its `bucket.json`; unpinning one changes nothing. A bucket or prefix that the file could not hold is refused before anything is recorded. Setting a label of empty text removes the entry of the bucket; any other label is kept as given. Removing a folder from the registry removes its entry and leaves the folder itself as it is.
+
+### Listing virtual buckets
+
+The list of virtual buckets is made from the folders directly below the root, when one is set, and the recorded folders. A folder is a virtual bucket when its `bucket.json` can be read; a folder below the root without one, or with one that is refused, is left out. Each row has the `path`, the `bucket` and `prefix`, the `label` of the bucket or null, `pinned`, `last_opened` and `exists`. For a folder whose `bucket.json` can be read, `bucket` and `prefix` come from it and `exists` is true. A folder below the root without an entry has `pinned` false and `last_opened` null. A recorded folder whose `bucket.json` cannot be read, because the folder is missing, on a disk that is not mounted, or no longer a virtual bucket, keeps the `bucket` and `prefix` of its entry with `exists` false, so that it stays in the list until the user removes it. A folder that is both below the root and recorded is one row. Rows are ordered with pinned rows first, then by `last_opened` from the latest, rows without a time after those with one, and rows that are equal so far by `path` in Unicode code point order.
+
+The root is where an implementation makes a new virtual bucket by default. The name it proposes for the folder is its own choice.
+
 ## Fixtures
 
 `fixtures/plan/*.json`: `policy` (`comparison`, `delete`), `source` and `target` entry lists, and the `expected` plan rows. `modified_time` is ISO 8601 UTC or null; `hash` may be omitted.
@@ -149,8 +186,14 @@ The state of each path of a virtual bucket, sorted by path:
 
 `fixtures/never-synced/*.json`: `paths`, and the `expected_kept` paths that a sync may touch, in order: those outside `.ebrains` that are not the files of interrupted transfers.
 
+`fixtures/registry/*.json`: the `text` of a `virtual-buckets.json` and either its `registry` (`root`, `buckets` and `folders`) or `expected_error: true` for a refused text. Reading the text gives the registry, and reading the text that writing the registry gives, the same registry.
+
+`fixtures/registry-list/*.json`: a `registry`, the paths of the `root_children`, `present`: one entry per path whose `bucket.json` can be read, with its `path`, `bucket` and `prefix`, and the `expected` rows, in order.
+
 ## Plan file
 
 `sync-plan.schema.json` describes the JSON a command writes with `--plan-file`: the policy, and each action with its outcome. `sync-policy.schema.json` describes the policy part on its own.
 
 `virtual-bucket.schema.json` describes the `bucket.json` file of a virtual bucket.
+
+`bucket-registry.schema.json` describes the `virtual-buckets.json` file of the [registry](#virtual-bucket-registry).

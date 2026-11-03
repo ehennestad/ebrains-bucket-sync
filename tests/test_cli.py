@@ -10,6 +10,7 @@ from ebrains_drive.exceptions import ClientHttpError
 
 from ebrains_bucket_sync import cli, engine
 from ebrains_bucket_sync.model import FileEntry
+from ebrains_bucket_sync.registry import registry_path, update_registry
 from ebrains_bucket_sync.virtual_bucket import (
     BucketInfo,
     read_bucket_info,
@@ -17,7 +18,7 @@ from ebrains_bucket_sync.virtual_bucket import (
     write_manifest,
 )
 
-from .conftest import FakeStorage, write
+from .conftest import FakeStorage, utc, write
 
 SPEC = Path(__file__).resolve().parents[1] / "spec"
 
@@ -616,3 +617,127 @@ def test_browse_without_a_page_to_show_is_an_error(
     assert result.exit_code == 1
     assert "Error: The browser page was not found. Give --page." in result.output
     assert shown == []
+
+
+def test_browse_without_a_folder_shows_the_list(runner, fake_storage, shown, page):
+    result = runner.invoke(cli.main, ["browse", "--page", str(page)])
+
+    assert result.exit_code == 0, result.output
+    (virtual_bucket, storage, shown_page), options = shown[0]
+    assert virtual_bucket is None
+    assert storage is fake_storage
+    assert options == {"update_on_ready": False}
+
+
+def test_browse_without_a_folder_refuses_a_bucket(runner, fake_storage, shown, page):
+    result = runner.invoke(cli.main, ["browse", "--bucket", "b", "--page", str(page)])
+
+    assert result.exit_code == 2
+    assert "--bucket and --prefix go with FOLDER." in result.output
+    assert shown == []
+
+
+def test_buckets_root_is_shown_set_and_cleared(runner, tmp_path):
+    root = tmp_path / "buckets"
+    root.mkdir()
+
+    assert runner.invoke(cli.main, ["buckets", "root"]).output == "No root folder is set.\n"
+    assert runner.invoke(cli.main, ["buckets", "root", str(root)]).exit_code == 0
+    assert runner.invoke(cli.main, ["buckets", "root"]).output == f"{root}\n"
+    assert runner.invoke(cli.main, ["buckets", "root", "--clear"]).exit_code == 0
+    assert runner.invoke(cli.main, ["buckets", "root"]).output == "No root folder is set.\n"
+
+
+def test_buckets_root_needs_an_existing_folder(runner, tmp_path):
+    result = runner.invoke(cli.main, ["buckets", "root", str(tmp_path / "missing")])
+
+    assert result.exit_code == 2
+    assert "does not exist" in result.output
+
+
+def test_buckets_label_pin_and_forget_change_the_list(runner, tmp_path):
+    folder = tmp_path / "vb"
+    folder.mkdir()
+    write_bucket_info(folder, BucketInfo("b"))
+    update_registry(lambda registry: registry.record_open(str(folder), "b", "", utc(2024, 1, 2)))
+
+    assert runner.invoke(cli.main, ["buckets", "label", "b", "Mouse V1"]).exit_code == 0
+    listing = runner.invoke(cli.main, ["buckets", "list"]).output
+    assert listing.startswith("  Mouse V1  (b)\n")
+    assert f"    {folder}  last opened " in listing
+
+    assert runner.invoke(cli.main, ["buckets", "pin", str(folder)]).exit_code == 0
+    assert runner.invoke(cli.main, ["buckets", "list"]).output.startswith("* Mouse V1")
+    assert runner.invoke(cli.main, ["buckets", "unpin", str(folder)]).exit_code == 0
+    assert runner.invoke(cli.main, ["buckets", "list"]).output.startswith("  Mouse V1")
+
+    assert runner.invoke(cli.main, ["buckets", "label", "b"]).exit_code == 0
+    assert runner.invoke(cli.main, ["buckets", "list"]).output.startswith("  b\n")
+
+    assert runner.invoke(cli.main, ["buckets", "forget", str(folder)]).exit_code == 0
+    assert runner.invoke(cli.main, ["buckets", "list"]).output.startswith("No virtual buckets yet.")
+    assert folder.is_dir()
+
+
+def test_buckets_list_marks_a_folder_that_is_gone(runner, tmp_path):
+    gone = tmp_path / "gone"
+    update_registry(lambda registry: registry.record_open(str(gone), "b", "sub/", utc(2024, 1, 2)))
+
+    listing = runner.invoke(cli.main, ["buckets", "list"]).output
+
+    assert listing == f"  b  (sub/)\n    {gone}  not found\n"
+
+
+def test_buckets_pin_records_a_folder_below_the_root_and_refuses_an_unlisted_one(runner, tmp_path):
+    root = tmp_path / "root"
+    (root / "d-1").mkdir(parents=True)
+    write_bucket_info(root / "d-1", BucketInfo("d-1"))
+    assert runner.invoke(cli.main, ["buckets", "root", str(root)]).exit_code == 0
+
+    pinned = runner.invoke(cli.main, ["buckets", "pin", str(root / "d-1")])
+    unlisted = runner.invoke(cli.main, ["buckets", "pin", str(tmp_path / "elsewhere")])
+
+    assert pinned.exit_code == 0, pinned.output
+    assert runner.invoke(cli.main, ["buckets", "list"]).output.startswith("* d-1\n")
+    assert unlisted.exit_code == 1
+    assert "is not in the list of virtual buckets" in unlisted.output
+
+
+def test_buckets_label_of_a_bucket_without_a_name_is_an_error(runner):
+    result = runner.invoke(cli.main, ["buckets", "label", "", "x"])
+
+    assert result.exit_code == 1
+    assert "not the name of a bucket" in result.output
+    assert not registry_path().exists()
+
+
+def test_buckets_forget_refuses_a_folder_below_the_root(runner, tmp_path):
+    root = tmp_path / "root"
+    (root / "d-1").mkdir(parents=True)
+    write_bucket_info(root / "d-1", BucketInfo("d-1"))
+    assert runner.invoke(cli.main, ["buckets", "root", str(root)]).exit_code == 0
+
+    result = runner.invoke(cli.main, ["buckets", "forget", str(root / "d-1")])
+
+    assert result.exit_code == 1
+    assert "directly below the root folder" in result.output
+    assert runner.invoke(cli.main, ["buckets", "list"]).output.startswith("  d-1\n")
+
+
+def test_buckets_root_records_a_relative_folder_as_absolute(runner, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "buckets").mkdir()
+
+    assert runner.invoke(cli.main, ["buckets", "root", "buckets"]).exit_code == 0
+
+    assert runner.invoke(cli.main, ["buckets", "root"]).output == f"{tmp_path / 'buckets'}\n"
+
+
+def test_buckets_commands_report_a_registry_that_cannot_be_read(runner):
+    registry_path().parent.mkdir(parents=True, exist_ok=True)
+    registry_path().write_text("{")
+
+    result = runner.invoke(cli.main, ["buckets", "list"])
+
+    assert result.exit_code == 1
+    assert "cannot be read" in result.output

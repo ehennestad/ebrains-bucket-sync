@@ -12,6 +12,12 @@ from ebrains_bucket_sync.exclude import ExcludeFileError, exclude_files, parse_e
 from ebrains_bucket_sync.local import LocalListing
 from ebrains_bucket_sync.model import FileEntry, PlanItem, SyncOptions
 from ebrains_bucket_sync.plan import case_colliding_deletions, deletion_refusal, plan_sync
+from ebrains_bucket_sync.registry import (
+    RegistryError,
+    format_registry,
+    list_virtual_buckets,
+    parse_registry,
+)
 from ebrains_bucket_sync.remote import parse_listing_time
 from ebrains_bucket_sync.virtual_bucket import (
     BucketInfo,
@@ -19,6 +25,7 @@ from ebrains_bucket_sync.virtual_bucket import (
     delete_removed_placeholders,
     file_states,
     format_manifest,
+    format_time,
     manifest_after_push,
     parse_manifest,
     protect_placeholders,
@@ -156,6 +163,50 @@ def test_manifest_update_fixture(case):
 
 # ---------------------------------------------------------------- Through a pull
 #
+@pytest.mark.parametrize("case", load_cases("registry"))
+def test_registry_fixture(case):
+    if case.get("expected_error"):
+        with pytest.raises(RegistryError):
+            parse_registry(case["text"])
+        return
+
+    registry = parse_registry(case["text"])
+
+    assert registry_data(registry) == case["registry"]
+    assert parse_registry(format_registry(registry)) == registry
+
+
+def registry_data(registry):
+    """The registry as the fixtures hold it: the written file without its format_version."""
+    data = json.loads(format_registry(registry))
+    del data["format_version"]
+    return data
+
+
+@pytest.mark.parametrize("case", load_cases("registry-list"))
+def test_registry_list_fixture(case):
+    registry = parse_registry(json.dumps(case["registry"] | {"format_version": 1}))
+    present = {item["path"]: item for item in case["present"]}
+
+    def info_of(path):
+        return (present[path]["bucket"], present[path]["prefix"]) if path in present else None
+
+    rows = list_virtual_buckets(registry, case["root_children"], info_of)
+
+    assert [
+        {
+            "path": row.path,
+            "bucket": row.bucket,
+            "prefix": row.prefix,
+            "label": row.label,
+            "pinned": row.pinned,
+            "last_opened": format_time(row.last_opened),
+            "exists": row.exists,
+        }
+        for row in rows
+    ] == case["expected"]
+
+
 # The plan and from_bucket placeholder fixtures run through sync_from_bucket
 # too, with the bucket listing the source (or listing) entries and the local
 # listing giving the target (or local) entries as they are, unknown times

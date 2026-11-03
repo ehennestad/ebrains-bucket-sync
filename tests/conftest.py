@@ -94,6 +94,12 @@ class FakeStorage:
         self.deleted.append((bucket, object_name))
 
 
+@pytest.fixture(autouse=True)
+def own_config_dir(monkeypatch, tmp_path_factory):
+    """Keep the configuration folder in a folder of the test, away from the user's registry."""
+    monkeypatch.setenv("EBRAINS_BUCKET_SYNC_CONFIG_DIR", str(tmp_path_factory.mktemp("config")))
+
+
 @pytest.fixture
 def storage() -> FakeStorage:
     return FakeStorage()
