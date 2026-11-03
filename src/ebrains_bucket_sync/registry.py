@@ -90,7 +90,12 @@ class Registry:
         return self.labels.get(bucket)
 
     def set_label(self, bucket: str, label: str) -> None:
-        """Give a bucket a label, or remove its label with empty text."""
+        """Give a bucket a label, or remove its label with empty text.
+
+        A bucket that is not a nonempty text is a ValueError, since the
+        file could not be read back.
+        """
+        _check_entry_fields(bucket, "")
         if label:
             self.labels[bucket] = label
         else:

@@ -258,6 +258,15 @@ def test_paths_are_recorded_as_given():
     assert registry.entry_of(Path("/a")) is not None
 
 
+def test_a_label_of_a_bucket_without_a_name_is_refused():
+    registry = Registry()
+
+    with pytest.raises(ValueError, match="not the name of a bucket"):
+        registry.set_label("", "x")
+
+    assert registry.labels == {}
+
+
 def test_an_empty_label_removes_the_label():
     registry = Registry()
     registry.set_label("d-1", "Mouse V1")
