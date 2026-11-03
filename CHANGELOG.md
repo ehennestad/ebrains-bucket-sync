@@ -2,6 +2,12 @@
 
 The notable changes of each release. The GitHub release of a version carries the same text.
 
+## Unreleased
+
+### Added
+
+- A package can add actions to the browser, such as a validator of the dataset, by registering them in the entry point group `ebrains_bucket_sync.actions`. The browser shows each action as a button, and an action on files also in the menus of files and folders, downloads the files the action asks for, runs it under a progress dialog with Cancel, and shows its message. Reports go below `.ebrains/reports`, which no sync touches. `ebrains_bucket_sync.actions` holds the protocol, and `show_browser` and `Host` take actions as `actions=`. The page shipped is the one of EBRAINS-MATLAB at 8bfa2d1, which offers the actions of the host.
+
 ## 0.2.0 (2026-11-03)
 
 `ebrains-bucket-sync` now syncs in both directions and understands virtual buckets: `pull` makes a local folder match a bucket, `browse` opens a folder that stands for a bucket in a window and fetches files one by one, and `push` leaves the placeholders of such a folder alone. The contract in `spec/README.md` describes virtual buckets, and the EBRAINS MATLAB toolbox 0.12.0 follows the same contract, so a folder made with one tool can be synced or browsed with the other. Existing `push` commands keep working; the exclude patterns `**` and a leading `/` now have their `.gitignore` meaning, listed under **Changed**.

@@ -557,7 +557,7 @@ def test_browse_makes_a_new_folder_a_virtual_bucket_and_shows_it(
     assert virtual_bucket.folder == folder.resolve()
     assert storage is fake_storage
     assert shown_page == page
-    assert options == {"update_on_ready": True}
+    assert options == {"update_on_ready": True, "actions": []}
 
 
 def test_browse_of_a_virtual_bucket_needs_no_bucket(runner, folder, fake_storage, shown, page):
@@ -568,7 +568,7 @@ def test_browse_of_a_virtual_bucket_needs_no_bucket(runner, folder, fake_storage
     assert result.exit_code == 0, result.output
     (virtual_bucket, _, _), options = shown[0]
     assert virtual_bucket.info == BucketInfo("b", "results/", None)
-    assert options == {"update_on_ready": False}
+    assert options == {"update_on_ready": False, "actions": []}
 
 
 def test_browse_of_a_plain_folder_needs_a_bucket(runner, folder, fake_storage, shown, page):
@@ -626,7 +626,7 @@ def test_browse_without_a_folder_shows_the_list(runner, fake_storage, shown, pag
     (virtual_bucket, storage, shown_page), options = shown[0]
     assert virtual_bucket is None
     assert storage is fake_storage
-    assert options == {"update_on_ready": False}
+    assert options == {"update_on_ready": False, "actions": []}
 
 
 def test_browse_without_a_folder_refuses_a_bucket(runner, fake_storage, shown, page):
@@ -741,3 +741,19 @@ def test_buckets_commands_report_a_registry_that_cannot_be_read(runner):
 
     assert result.exit_code == 1
     assert "cannot be read" in result.output
+
+
+def test_browse_offers_the_actions_of_plugins_and_reports_those_not_loaded(
+    runner, folder, fake_storage, shown, page, monkeypatch
+):
+    write_bucket_info(folder, BucketInfo("b", ""))
+    action = object()
+    monkeypatch.setattr(
+        cli, "load_actions", lambda: ([action], [("broken", RuntimeError("No module."))])
+    )
+
+    result = runner.invoke(cli.main, ["browse", str(folder), "--page", str(page)])
+
+    assert result.exit_code == 0, result.output
+    assert shown[0][1]["actions"] == [action]
+    assert 'Warning: the action "broken" of a plugin was not loaded: No module.' in result.output
