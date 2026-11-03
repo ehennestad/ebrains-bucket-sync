@@ -38,6 +38,18 @@ from urllib.parse import quote
 from .engine import LocalFileChanged, download_object, never_synced
 from .local import compute_md5, list_local_files, local_file_entry
 from .model import BucketStorage, FileEntry, ListingProgressStorage
+from .paths import InvalidPrefixError, normalize_prefix
+from .registry import (
+    ListedBucket,
+    RegistryError,
+    bucket_info_of,
+    list_virtual_buckets,
+    normalize_path,
+    read_registry,
+    record_folder_opened,
+    root_children,
+    update_registry,
+)
 from .remote import remote_files_from_objects
 from .text import count_text, format_size
 from .virtual_bucket import (
@@ -113,7 +125,10 @@ class VirtualBucket:
     bucket, and of a manifest that another tool wrote with such an entry.
 
     Attributes:
-        folder: Absolute path of the folder.
+        folder: Absolute path of the folder, with links resolved.
+        opened_path: The path of the folder as the registry of virtual
+            buckets records it (registry.normalize_path): absolute, links
+            not resolved.
         info: The bucket the folder stands for and when it was listed.
         manifest: The objects of the last listing, or None if never listed.
         local_files: The files of the folder at the last scan, those a sync
@@ -123,6 +138,7 @@ class VirtualBucket:
 
     def __init__(self, folder: Path, info: BucketInfo, manifest: list[FileEntry] | None) -> None:
         self.folder = Path(folder).resolve()
+        self.opened_path = normalize_path(folder)
         self.info = info
         self.manifest = None if manifest is None else _synced_entries(manifest)
         self.local_files: list[FileEntry] = []
@@ -260,12 +276,16 @@ class VirtualBucket:
         write_bucket_info(self.folder, self.info)
         self.manifest = entries
 
-    def state_data(self, *, message: str = "", reveal_label: str = "") -> dict[str, Any]:
+    def state_data(
+        self, *, message: str = "", reveal_label: str = "", label: str = "", has_list: bool = False
+    ) -> dict[str, Any]:
         """The data of the state event, as the page's header describes it."""
         return {
             "bucketName": self.info.bucket,
             "localFolder": str(self.folder),
             "prefix": self.info.prefix,
+            "label": label,
+            "hasList": has_list,
             "isListed": self.is_listed,
             "listedAt": format_local_time(self.info.listed_at),
             "revealLabel": reveal_label,
@@ -295,10 +315,15 @@ class _Confirmation:
 
 
 class Host:
-    """Carries out the requests of the page on a virtual bucket.
+    """Carries out the requests of the page on a virtual bucket, or on the list of them.
+
+    Without a virtual bucket the page shows the list of the virtual
+    buckets of the user (spec/README.md#listing-virtual-buckets), from
+    which one is opened; a bucket view goes back to the list. Opening a
+    folder records it in the registry.
 
     Args:
-        virtual_bucket: The folder shown.
+        virtual_bucket: The folder shown, or None for the list.
         storage: Where its bucket is listed and the objects are fetched from.
         page: Where the events go.
         run_command: Runs a command of the operating system, as
@@ -306,25 +331,38 @@ class Host:
         open_url: Opens a web page, as webbrowser.open does. For tests.
         update_on_ready: List the bucket as soon as the page is ready, for
             a folder that was just created and has no files yet.
+        choose_folder: Asks the user for a folder, called with the folder
+            to start in and a title, and returns the folder or None when
+            the dialog is cancelled. Without one the page's "Open folder"
+            and "Change root" do nothing. show_browser sets it to the
+            folder dialog of the window once that exists.
+        set_title: Sets the title of the window. Nothing by default.
     """
 
     def __init__(
         self,
-        virtual_bucket: VirtualBucket,
+        virtual_bucket: VirtualBucket | None,
         storage: BucketStorage,
         page: Page,
         *,
         run_command: Callable[[list[str]], subprocess.CompletedProcess] | None = None,
         open_url: Callable[[str], object] | None = None,
         update_on_ready: bool = False,
+        choose_folder: Callable[[str, str], str | None] | None = None,
+        set_title: Callable[[str], object] | None = None,
     ) -> None:
         self.bucket = virtual_bucket
+        self.choose_folder = choose_folder
+        self.set_title = set_title
         self._storage = storage
         self._page = page
         self._run_command = run_command or _run_command
         self._open_url = open_url or webbrowser.open
         self._update_on_ready = update_on_ready
         self._message = ""
+        self._listed: list[ListedBucket] = []
+        """The rows of the list as last sent, where a pin of a folder
+        without an entry finds its bucket and prefix."""
         self._page_ready = False
         self._closed = False
         self._action_lock = threading.Lock()
@@ -353,20 +391,53 @@ class Host:
                 self._cancelled.add(str(payload["id"]))
             return
 
-        paths = [str(path) for path in payload.get("paths", [])]
         with self._action_lock:
             try:
-                self._act(name, paths)
+                self._act(name, payload)
             except Exception as error:
                 self._alert("Something went wrong", str(error) or type(error).__name__)
 
-    def _act(self, name: str, paths: list[str]) -> None:
+    def _act(self, name: str, payload: dict[str, Any]) -> None:
+        paths = [str(path) for path in payload.get("paths", [])]
         if name == "ready":
             self._page_ready = True
+            if self.bucket is None:
+                self._send_buckets()
+                return
+            self._record_open()
             self._send_state()
             if self._update_on_ready:
                 self._update_on_ready = False
                 self._update()
+        elif name == "showList":
+            self._show_list()
+        elif name == "openBucket":
+            self._open_folder(str(payload["path"]))
+        elif name == "newBucket":
+            self._open_folder(
+                str(payload["folder"]), str(payload["bucket"]), str(payload.get("prefix", ""))
+            )
+        elif name == "chooseFolder":
+            folder = self._ask_for_folder("Choose the folder of a virtual bucket")
+            if folder:
+                self._open_folder(folder)
+        elif name == "chooseRoot":
+            folder = self._ask_for_folder("Choose the folder where new virtual buckets are made")
+            if folder:
+                root = normalize_path(folder)
+                update_registry(lambda registry: setattr(registry, "root", root))
+                self._send_buckets()
+        elif name == "setLabel":
+            bucket, label = str(payload["bucket"]), str(payload["label"])
+            update_registry(lambda registry: registry.set_label(bucket, label))
+            self._send_buckets()
+        elif name == "setPinned":
+            self._pin_folder(str(payload["path"]), bool(payload["pinned"]))
+            self._send_buckets()
+        elif name == "removeFolder":
+            path = str(payload["path"])
+            update_registry(lambda registry: registry.remove_folder(path))
+            self._send_buckets()
         elif name == "refresh":
             self._message = ""
             self._refresh()
@@ -381,7 +452,7 @@ class Host:
         elif name == "reveal":
             self._reveal(paths[0])
         elif name == "openOnline":
-            self._open_url(bucket_web_url(self.bucket.info.bucket))
+            self._open_url(bucket_web_url(self._open_bucket().info.bucket))
         # The page sends no other requests
 
     def close(self) -> None:
@@ -392,10 +463,116 @@ class Host:
         for confirmation in pending:
             confirmation.answered.set()
 
+    # ---------------------------------------------------------------- The list
+
+    def _open_bucket(self) -> VirtualBucket:
+        """The virtual bucket shown; an error while the list is shown."""
+        if self.bucket is None:
+            raise RuntimeError("No virtual bucket is open. Open one from the list first.")
+        return self.bucket
+
+    def _open_folder(
+        self, folder: str, bucket: str | None = None, prefix: str | None = None
+    ) -> None:
+        """Show a folder as a virtual bucket, making it one of bucket if needed.
+
+        A folder that does not exist is created and filled from a listing
+        of the bucket. A folder that cannot be opened is reported, and the
+        list stays.
+        """
+        is_new_folder = not Path(folder).is_dir()
+        try:
+            if prefix is not None:
+                prefix = normalize_prefix(prefix)
+            virtual_bucket = VirtualBucket.open(folder, bucket or None, prefix)
+        except (VirtualBucketError, InvalidPrefixError, OSError) as error:
+            self._alert("Could not open the folder", str(error) or type(error).__name__)
+            return
+        self.bucket = virtual_bucket
+        self._message = ""
+        self._record_open()
+        if self.set_title is not None:
+            self.set_title(f"Virtual bucket - {virtual_bucket.info.bucket}")
+        self._send_state()
+        if is_new_folder:
+            self._update()
+
+    def _show_list(self) -> None:
+        """Show the list in place of the bucket, which is closed."""
+        self.bucket = None
+        self._message = ""
+        if self.set_title is not None:
+            self.set_title("Virtual buckets")
+        self._send_buckets()
+
+    def _record_open(self) -> None:
+        bucket = self._open_bucket()
+        record_folder_opened(bucket.opened_path, bucket.info.bucket, bucket.info.prefix)
+
+    def _pin_folder(self, path: str, pinned: bool) -> None:
+        """Pin or unpin a folder of the list, recording one that has no entry yet."""
+        row = next((row for row in self._listed if row.path == path), None)
+        if row is None:
+            raise ValueError(f'"{path}" is not in the list of virtual buckets.')
+        update_registry(
+            lambda registry: registry.set_pinned(path, pinned, bucket=row.bucket, prefix=row.prefix)
+        )
+
+    def _ask_for_folder(self, title: str) -> str | None:
+        if self.choose_folder is None:
+            return None
+        start = ""
+        try:
+            start = read_registry().root or ""
+        except RegistryError:
+            pass  # the dialog starts where the toolkit likes
+        return self.choose_folder(start or os.getcwd(), title)
+
+    def _send_buckets(self) -> None:
+        """Send the list of virtual buckets, which the page shows in place of a bucket.
+
+        A registry that cannot be read is reported, and the list is sent
+        empty, so that the page is usable all the same.
+        """
+        try:
+            registry = read_registry()
+            rows = list_virtual_buckets(registry, root_children(registry.root), bucket_info_of)
+            root = registry.root or ""
+        except RegistryError as error:
+            rows, root = [], ""
+            self._alert("Could not read the list of virtual buckets", str(error))
+        self._listed = rows
+        self._send(
+            "buckets",
+            {
+                "root": root,
+                "separator": os.sep,
+                "rows": [
+                    {
+                        "path": row.path,
+                        "bucket": row.bucket,
+                        "prefix": row.prefix,
+                        "label": row.label or "",
+                        "pinned": row.pinned,
+                        "lastOpened": format_local_time(row.last_opened),
+                        "exists": row.exists,
+                    }
+                    for row in rows
+                ],
+            },
+        )
+
+    def _label(self) -> str:
+        """The label the user gave the bucket, "" for none or for a registry that cannot be read."""
+        try:
+            return read_registry().label_of(self._open_bucket().info.bucket) or ""
+        except RegistryError:
+            return ""
+
     # ---------------------------------------------------------------- Actions
 
     def _refresh(self) -> None:
-        self.bucket.scan()
+        self._open_bucket().scan()
         self._send_state()
 
     def _update(self) -> None:
@@ -405,7 +582,7 @@ class Host:
         and the placeholders of objects that are gone are deleted. Other
         local files that the bucket does not have are kept.
         """
-        bucket = self.bucket.info.bucket
+        bucket = self._open_bucket().info.bucket
         self._send("busy", {"busy": True})
         self._open_progress(
             "update",
@@ -507,7 +684,7 @@ class Host:
     def _download(self, paths: list[str]) -> None:
         """Download the files of the given paths that are online only or differ."""
         # The files may have been edited since the last scan
-        self.bucket.rescan(paths)
+        self._open_bucket().rescan(paths)
         rows = [row for row in self.bucket.rows(paths) if row.state in ("online_only", "differs")]
         if not rows:
             self._alert(
@@ -606,7 +783,7 @@ class Host:
     def _make_online_only(self, paths: list[str]) -> None:
         """Replace the downloaded files of the given paths with placeholders."""
         # The files may have been edited since the last scan
-        self.bucket.rescan(paths)
+        self._open_bucket().rescan(paths)
         selected = self.bucket.rows(paths)
         n_local_only = sum(1 for row in selected if row.state == "local_only")
         rows = [row for row in selected if row.state in ("downloaded", "differs")]
@@ -661,7 +838,7 @@ class Host:
 
     def _open(self, path: str) -> None:
         """Open a file with the default application of the system, downloading it first."""
-        row = self.bucket.row(path)
+        row = self._open_bucket().row(path)
         if row is not None and row.state == "online_only":
             message = f'"{path}" is online only. Download it and open it?'
             if not self._confirm(message, "Download file?", "Download and open"):
@@ -677,7 +854,7 @@ class Host:
 
     def _reveal(self, path: str) -> None:
         """Show a file or folder in the file manager of the system."""
-        self._run_system_command(reveal_command(self.bucket.folder / path))
+        self._run_system_command(reveal_command(self._open_bucket().folder / path))
 
     def _run_system_command(self, command: list[str]) -> None:
         """Run a command of the operating system, and report a failure.
@@ -699,7 +876,12 @@ class Host:
     def _send_state(self) -> None:
         self._send(
             "state",
-            self.bucket.state_data(message=self._message, reveal_label=reveal_action_name()),
+            self._open_bucket().state_data(
+                message=self._message,
+                reveal_label=reveal_action_name(),
+                label=self._label(),
+                has_list=True,
+            ),
         )
 
     def _alert(self, title: str, message: str, *, icon: str = "error") -> None:
@@ -944,25 +1126,37 @@ class _PageApi:
 
 
 def show_browser(
-    virtual_bucket: VirtualBucket,
+    virtual_bucket: VirtualBucket | None,
     storage: BucketStorage,
     page_path: Path,
     *,
     update_on_ready: bool = False,
 ) -> None:
-    """Show the page in a window, and return when the window is closed."""
+    """Show the page in a window, and return when the window is closed.
+
+    Without a virtual bucket the window opens on the list of virtual
+    buckets.
+    """
     import webview  # loads the GUI toolkit, which only the browser needs
 
     page = PywebviewPage()
     host = Host(virtual_bucket, storage, page, update_on_ready=update_on_ready)
+    title = (
+        "Virtual buckets"
+        if virtual_bucket is None
+        else f"Virtual bucket - {virtual_bucket.info.bucket}"
+    )
     window = webview.create_window(
-        f"Virtual bucket - {virtual_bucket.info.bucket}",
-        url=str(page_path),
-        js_api=_PageApi(host),
-        width=1100,
-        height=680,
+        title, url=str(page_path), js_api=_PageApi(host), width=1100, height=680
     )
     page.window = window
+
+    def choose_folder(start: str, title: str) -> str | None:
+        chosen = window.create_file_dialog(webview.FOLDER_DIALOG, directory=start)
+        return chosen[0] if chosen else None
+
+    host.choose_folder = choose_folder
+    host.set_title = window.set_title
     window.events.closed += host.close
     webview.start()
 

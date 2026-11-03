@@ -13,12 +13,23 @@ from typing import Any
 import click
 
 from .auth import AuthError, DeviceFlowAuthenticator
-from .browser import ENV_PAGE, VirtualBucket, default_page_path, show_browser
+from .browser import ENV_PAGE, VirtualBucket, default_page_path, format_local_time, show_browser
 from .engine import SyncEvent, SyncRefused, is_case_collision, sync_from_bucket, sync_to_bucket
 from .exclude import ExcludeFileError, read_exclude_file
 from .model import COMPARISONS, ActionResult, BucketStorage, SyncOptions, SyncWarning
 from .paths import InvalidPrefixError, normalize_prefix
 from .planfile import plan_to_dict, write_plan_file
+from .registry import (
+    ListedBucket,
+    Registry,
+    RegistryError,
+    bucket_info_of,
+    list_virtual_buckets,
+    normalize_path,
+    read_registry,
+    root_children,
+    update_registry,
+)
 from .storage import EbrainsDriveStorage, request_error_message
 from .text import format_size
 from .virtual_bucket import VirtualBucketError
@@ -312,7 +323,7 @@ def _run_sync(
 
 
 @main.command()
-@click.argument("folder", type=click.Path(file_okay=False, path_type=Path))
+@click.argument("folder", required=False, type=click.Path(file_okay=False, path_type=Path))
 @click.option(
     "--bucket",
     help="Name of the bucket. Needed for a folder that is not a virtual bucket yet; for one "
@@ -331,22 +342,140 @@ def _run_sync(
     envvar=ENV_PAGE,
     help="The virtualBucketBrowser.html page to show. Default: the copy in this package.",
 )
-def browse(folder: Path, bucket: str | None, prefix: str | None, page: Path | None) -> None:
-    """Browse the virtual bucket in FOLDER, download files and make them online only.
+def browse(folder: Path | None, bucket: str | None, prefix: str | None, page: Path | None) -> None:
+    """Browse a virtual bucket, download files and make them online only.
 
-    A folder that is not a virtual bucket becomes one of --bucket. A
-    folder that does not exist is created, and filled with placeholders
-    from a listing of the bucket.
+    Without FOLDER the window opens on the list of your virtual buckets,
+    from which one is opened or a new one made (see the buckets commands).
+    With FOLDER it opens that virtual bucket. A folder that is not a
+    virtual bucket becomes one of --bucket. A folder that does not exist
+    is created, and filled with placeholders from a listing of the bucket.
     """
-    is_new_folder = not folder.is_dir()
+    if folder is None and (bucket is not None or prefix is not None):
+        raise click.UsageError("--bucket and --prefix go with FOLDER.")
+    is_new_folder = folder is not None and not folder.is_dir()
     try:
-        virtual_bucket = VirtualBucket.open(folder, bucket, prefix)
+        virtual_bucket = None if folder is None else VirtualBucket.open(folder, bucket, prefix)
         if page is None:
             page = default_page_path()
     except (VirtualBucketError, OSError) as error:
         # An OSError is a folder that cannot be created, read or written
         raise click.ClickException(str(error)) from error
     show_browser(virtual_bucket, make_storage(), page, update_on_ready=is_new_folder)
+
+
+@main.group()
+def buckets() -> None:
+    """Manage the list of your virtual buckets: labels, pins and the root folder.
+
+    The list holds the folders directly below the root folder and the
+    folders opened before, and is kept in virtual-buckets.json in the
+    configuration folder, shared with the EBRAINS MATLAB toolbox.
+    """
+
+
+@buckets.command("list")
+def buckets_list() -> None:
+    """List the virtual buckets, pinned ones first, then from the last opened."""
+    rows = _registry_rows()
+    if not rows:
+        click.echo("No virtual buckets yet. Make one with browse, or set a root with buckets root.")
+        return
+    for row in rows:
+        marker = "*" if row.pinned else " "
+        name = row.label or row.bucket
+        where = f"{row.bucket}{' / ' + row.prefix if row.prefix else ''}"
+        detail = where if row.label else (row.prefix or "")
+        if row.exists:
+            status = f"last opened {format_local_time(row.last_opened) or 'never'}"
+        else:
+            status = "not found"
+        click.echo(f"{marker} {name}" + (f"  ({detail})" if detail else ""))
+        click.echo(f"    {row.path}  {status}")
+
+
+@buckets.command("label")
+@click.argument("bucket")
+@click.argument("label", required=False)
+def buckets_label(bucket: str, label: str | None) -> None:
+    """Give BUCKET the label LABEL, shown in place of its name; without LABEL, remove it."""
+    _update_registry(lambda registry: registry.set_label(bucket, label or ""))
+
+
+@buckets.command("pin")
+@click.argument("folder", type=click.Path(path_type=Path))
+def buckets_pin(folder: Path) -> None:
+    """Pin the virtual bucket in FOLDER to the top of the list."""
+    _set_pinned(folder, True)
+
+
+@buckets.command("unpin")
+@click.argument("folder", type=click.Path(path_type=Path))
+def buckets_unpin(folder: Path) -> None:
+    """Unpin the virtual bucket in FOLDER."""
+    _set_pinned(folder, False)
+
+
+@buckets.command("forget")
+@click.argument("folder", type=click.Path(path_type=Path))
+def buckets_forget(folder: Path) -> None:
+    """Remove FOLDER from the list. The folder itself is left as it is."""
+    path = normalize_path(folder)
+    _update_registry(lambda registry: registry.remove_folder(path))
+
+
+@buckets.command("root")
+@click.argument(
+    "folder", required=False, type=click.Path(exists=True, file_okay=False, path_type=Path)
+)
+@click.option("--clear", is_flag=True, help="Remove the root folder.")
+def buckets_root(folder: Path | None, clear: bool) -> None:
+    """Show, set or clear the folder where new virtual buckets are made.
+
+    The virtual buckets directly below the root are listed whether or not
+    they were opened before, and browse proposes a folder below it for a
+    new virtual bucket.
+    """
+    if folder is not None and clear:
+        raise click.UsageError("Give FOLDER or --clear, not both.")
+    if folder is None and not clear:
+        root = _read_registry().root
+        click.echo(root if root else "No root folder is set.")
+        return
+    root = None if clear else normalize_path(folder)
+    _update_registry(lambda registry: setattr(registry, "root", root))
+
+
+def _read_registry() -> Registry:
+    try:
+        return read_registry()
+    except RegistryError as error:
+        raise click.ClickException(str(error)) from error
+
+
+def _registry_rows() -> list[ListedBucket]:
+    registry = _read_registry()
+    return list_virtual_buckets(registry, root_children(registry.root), bucket_info_of)
+
+
+def _update_registry(change: Callable[[Registry], object]) -> None:
+    try:
+        update_registry(change)
+    except (RegistryError, OSError) as error:
+        raise click.ClickException(str(error)) from error
+
+
+def _set_pinned(folder: Path, pinned: bool) -> None:
+    """Pin or unpin a folder of the list; one below the root that was never opened is recorded."""
+    path = normalize_path(folder)
+    row = next((row for row in _registry_rows() if row.path == path), None)
+    if row is None:
+        raise click.ClickException(
+            f'"{path}" is not in the list of virtual buckets. Open it with browse first.'
+        )
+    _update_registry(
+        lambda registry: registry.set_pinned(path, pinned, bucket=row.bucket, prefix=row.prefix)
+    )
 
 
 class ConsolePrinter:

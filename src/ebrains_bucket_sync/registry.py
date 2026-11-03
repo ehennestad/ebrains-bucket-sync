@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import warnings
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -50,6 +51,10 @@ FORMAT_VERSION = 1
 
 class RegistryError(Exception):
     """The registry file cannot be read."""
+
+
+class RegistryWarning(UserWarning):
+    """The registry could not be updated; the action it records went ahead."""
 
 
 @dataclass(frozen=True)
@@ -204,6 +209,40 @@ def write_registry(registry: Registry, path: Path | None = None) -> None:
     path = path or registry_path()
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     write_atomically(path, format_registry(registry))
+
+
+def update_registry(change: Callable[[Registry], object], path: Path | None = None) -> Registry:
+    """Read the registry, apply change to it, write it back and return it.
+
+    Raises RegistryError as read_registry does.
+    """
+    registry = read_registry(path)
+    change(registry)
+    write_registry(registry, path)
+    return registry
+
+
+def record_folder_opened(
+    folder: str | os.PathLike[str], bucket: str, prefix: str, path: Path | None = None
+) -> None:
+    """Record that a folder was opened as a virtual bucket of bucket and prefix, now.
+
+    The folder is recorded as normalize_path writes it. The registry is a
+    convenience of the user, so one that cannot be read or written is
+    reported as a RegistryWarning and the caller goes on.
+    """
+    absolute = normalize_path(folder)
+    opened_at = datetime.now(timezone.utc)
+    try:
+        update_registry(
+            lambda registry: registry.record_open(absolute, bucket, prefix, opened_at), path
+        )
+    except (RegistryError, OSError) as error:
+        warnings.warn(
+            f"The folder was not recorded in the list of virtual buckets: {error}",
+            RegistryWarning,
+            stacklevel=2,
+        )
 
 
 def parse_registry(text: str | bytes, *, name: str = REGISTRY_FILE) -> Registry:

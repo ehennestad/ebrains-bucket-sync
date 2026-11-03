@@ -68,6 +68,17 @@ ebrains-bucket-sync browse my-dataset --bucket my-bucket --prefix results
 
 A folder that is not a virtual bucket becomes one of `--bucket`, and a folder that does not exist is created and filled with placeholders from a listing of the bucket. `createVirtualBucket` and the virtual bucket browser of the MATLAB toolbox make and open the same folders.
 
+`browse` without a folder opens the list of your virtual buckets: the folders directly below the root folder and the folders opened before, with a filter, pinned folders first, and a label for each bucket in place of its name, which is often a UUID. From the list a virtual bucket is opened, or a new one made from the name of its bucket alone once a root folder is set. The `buckets` commands manage the same list from the command line:
+
+```bash
+ebrains-bucket-sync buckets root ~/EBRAINS-buckets
+ebrains-bucket-sync buckets label d-4f3a2b1c-5d6e-4f70-8a9b-0c1d2e3f4a5b "Mouse V1 recordings"
+ebrains-bucket-sync buckets pin ~/EBRAINS-buckets/d-4f3a2b1c-5d6e-4f70-8a9b-0c1d2e3f4a5b
+ebrains-bucket-sync buckets list
+```
+
+The list is `virtual-buckets.json` in the configuration folder (see [Authentication](#authentication)), which the MATLAB toolbox reads and writes too, as [spec/README.md](https://github.com/ehennestad/ebrains-bucket-sync/blob/main/spec/README.md#virtual-bucket-registry) describes.
+
 A push of a virtual bucket is refused unless the bucket and `--prefix` are the ones it stands for, leaves the placeholders alone, and never syncs the `.ebrains` folder. A pull deletes the placeholders of objects removed from the bucket. After either, the manifest in `.ebrains` records what the bucket holds.
 
 ### From Python
