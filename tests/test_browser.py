@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -314,7 +315,7 @@ def test_never_listed_folder_is_judged_from_the_files_alone(folder, storage):
     assert state["files"]["remoteBytes"] == [None, None]
 
 
-def test_refresh_reads_the_folder_again_and_clears_the_message(folder, storage):
+def test_refresh_reads_the_folder_again_and_gives_the_time_it_did(folder, storage):
     make_virtual_bucket(folder, "b")
     host, page = make_host(folder, storage)
     write(folder, "new.dat", b"n")
@@ -322,7 +323,7 @@ def test_refresh_reads_the_folder_again_and_clears_the_message(folder, storage):
     request(host, "refresh")
 
     assert page.state["files"]["path"] == ["new.dat"]
-    assert page.state["message"] == ""
+    assert re.fullmatch(r"Read the local folder at \d{2}:\d{2}:\d{2}\.", page.state["message"])
 
 
 # ---------------------------------------------------------------- Update

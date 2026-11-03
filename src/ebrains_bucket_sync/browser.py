@@ -441,7 +441,9 @@ class Host:
             path = str(payload["path"])
             self._change_list(lambda registry: registry.remove_folder(path))
         elif name == "refresh":
-            self._message = ""
+            # The time changes with every press, so a refresh that finds
+            # nothing new still shows that it ran
+            self._message = f"Read the local folder at {datetime.now():%H:%M:%S}."
             self._refresh()
         elif name == "update":
             self._update()
