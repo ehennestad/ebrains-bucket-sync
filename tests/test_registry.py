@@ -1,7 +1,8 @@
 """The registry of virtual buckets, spec/README.md#virtual-bucket-registry."""
 
 import json
-from datetime import datetime, timezone
+import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import jsonschema
@@ -16,6 +17,7 @@ from ebrains_bucket_sync.registry import (
     bucket_info_of,
     format_registry,
     list_virtual_buckets,
+    normalize_path,
     parse_registry,
     read_registry,
     registry_path,
@@ -155,6 +157,64 @@ def test_opening_records_the_folder_and_keeps_its_pin():
 
     assert registry.entry_of("/a") == FolderEntry("/a", "new", "", True, OPENED_AT)
     assert registry.entry_of("/b") == FolderEntry("/b", "b", "sub/", False, LATER)
+
+
+def test_opening_records_the_time_in_utc_to_the_second():
+    registry = Registry()
+    oslo = timezone(timedelta(hours=1))
+
+    registry.record_open("/a", "a", "", datetime(2024, 1, 2, 4, 4, 5, 678000, tzinfo=oslo))
+
+    assert registry.entry_of("/a").last_opened == OPENED_AT
+    assert parse_registry(format_registry(registry)) == registry
+
+
+def test_opening_needs_an_aware_time():
+    with pytest.raises(ValueError, match="aware"):
+        Registry().record_open("/a", "a", "", datetime(2024, 1, 2, 3, 4, 5))
+
+
+@pytest.mark.parametrize("bucket, prefix", [("", ""), ("a", "results"), ("a", "../x/")])
+def test_a_bucket_or_prefix_the_file_cannot_hold_is_refused_before_it_is_recorded(bucket, prefix):
+    registry = Registry()
+
+    with pytest.raises(ValueError):
+        registry.record_open("/a", bucket, prefix, OPENED_AT)
+    with pytest.raises(ValueError):
+        registry.set_pinned("/a", True, bucket=bucket, prefix=prefix)
+
+    assert registry.folders == {}
+
+
+def test_unpinning_an_unrecorded_folder_changes_nothing():
+    registry = Registry()
+
+    registry.set_pinned("/a", False)
+    registry.set_pinned("/b", False, bucket="b", prefix="")
+
+    assert registry.folders == {}
+
+
+def test_a_file_that_cannot_be_read_is_refused_by_name(tmp_path):
+    path = tmp_path / "virtual-buckets.json"
+    path.mkdir()
+
+    with pytest.raises(RegistryError, match="cannot be read"):
+        read_registry(path)
+
+
+def test_normalize_path_gives_the_absolute_path_without_a_trailing_separator(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    assert normalize_path("sub/./x/") == str(tmp_path / "sub" / "x")
+    assert normalize_path(str(tmp_path) + os.sep) == str(tmp_path)
+    assert normalize_path(tmp_path / "a" / ".." / "b") == str(tmp_path / "b")
+
+
+def test_root_children_are_written_as_recorded_paths(tmp_path):
+    (tmp_path / "a").mkdir()
+
+    assert root_children(str(tmp_path) + os.sep + "." + os.sep) == [str(tmp_path / "a")]
 
 
 def test_opening_again_replaces_the_time():

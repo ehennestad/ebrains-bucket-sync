@@ -14,7 +14,7 @@ import json
 import os
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .config import config_dir
@@ -26,6 +26,20 @@ from .virtual_bucket import (
     read_bucket_info,
     write_atomically,
 )
+
+
+def normalize_path(path: str | os.PathLike[str]) -> str:
+    """A folder path as the registry records it.
+
+    Absolute, with the separator of the system, without a trailing
+    separator or "." and ".." segments. Links are not resolved, so a
+    folder below a root that is a link is the same folder as the one a
+    scan of the root finds. Two paths are the same folder when they are
+    equal as text, so every path given to the registry goes through this
+    first.
+    """
+    return os.path.normpath(os.path.abspath(os.fspath(path)))
+
 
 REGISTRY_FILE = "virtual-buckets.json"
 """Name of the registry file in the configuration folder."""
@@ -90,9 +104,18 @@ class Registry:
     ) -> None:
         """Record that a folder was opened as a virtual bucket of bucket and prefix.
 
-        The entry keeps its pinned flag; a folder without one is recorded unpinned.
+        The entry keeps its pinned flag; a folder without one is recorded
+        unpinned. opened_at is an aware datetime, recorded in UTC to the
+        second, as the file holds it. The path is recorded as given (see
+        normalize_path). A bucket that is not a nonempty text, or a prefix
+        that is not "" or a folder name with a trailing "/", is a
+        ValueError, since the file could not be read back.
         """
         key = os.fspath(path)
+        _check_entry_fields(bucket, prefix)
+        if opened_at.tzinfo is None:
+            raise ValueError("opened_at must be an aware datetime")
+        opened_at = opened_at.astimezone(timezone.utc).replace(microsecond=0)
         entry = self.folders.get(key)
         pinned = entry.pinned if entry is not None else False
         self.folders[key] = FolderEntry(key, bucket, prefix, pinned, opened_at)
@@ -107,20 +130,35 @@ class Registry:
     ) -> None:
         """Pin or unpin a folder.
 
-        A folder that is not recorded is recorded without a time, which needs
-        its bucket and prefix.
+        Pinning a folder that is not recorded records it without a time,
+        which needs its bucket and prefix (checked as in record_open);
+        unpinning one changes nothing.
         """
         key = os.fspath(path)
         entry = self.folders.get(key)
         if entry is None:
+            if not pinned:
+                return
             if bucket is None or prefix is None:
                 raise ValueError(f"{key} is not recorded: give its bucket and prefix to pin it")
+            _check_entry_fields(bucket, prefix)
             entry = FolderEntry(key, bucket, prefix)
         self.folders[key] = replace(entry, pinned=pinned)
 
     def remove_folder(self, path: str | os.PathLike[str]) -> None:
         """Forget a folder. The folder itself is left as it is."""
         self.folders.pop(os.fspath(path), None)
+
+
+def _check_entry_fields(bucket: str, prefix: str) -> None:
+    """Refuse a bucket or prefix that the registry file could not hold."""
+    if not isinstance(bucket, str) or not bucket:
+        raise ValueError(f"bucket {bucket!r} is not the name of a bucket")
+    if not isinstance(prefix, str) or not is_normalized_prefix(prefix):
+        raise ValueError(
+            f'prefix {prefix!r} is neither "" nor a folder name with a trailing "/" '
+            f"that stays below the bucket"
+        )
 
 
 def registry_path() -> Path:
@@ -132,13 +170,16 @@ def read_registry(path: Path | None = None) -> Registry:
     """The registry in the file, or an empty registry when there is no file.
 
     Raises RegistryError when the file does not follow
-    bucket-registry.schema.json, or is of a newer format.
+    bucket-registry.schema.json, is of a newer format, or cannot be read
+    for another reason than being missing.
     """
     path = path or registry_path()
     try:
         text = path.read_bytes()
     except FileNotFoundError:
         return Registry()
+    except OSError as error:
+        raise RegistryError(f"{path} cannot be read: {error}") from error
     return parse_registry(text, name=str(path))
 
 
@@ -334,10 +375,13 @@ def list_virtual_buckets(
 def root_children(root: str | os.PathLike[str] | None) -> list[str]:
     """Paths of the folders directly below the root, sorted by name.
 
-    No root, or one that cannot be read, gives no folders.
+    The root is normalized first (see normalize_path), so that the
+    children are written as the registry records folders. No root, or one
+    that cannot be read, gives no folders.
     """
     if not root:
         return []
+    root = normalize_path(root)
     try:
         with os.scandir(root) as entries:
             children = sorted(entries, key=lambda entry: entry.name)
