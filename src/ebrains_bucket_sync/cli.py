@@ -12,6 +12,7 @@ from typing import Any
 
 import click
 
+from .actions import load_actions
 from .auth import AuthError, DeviceFlowAuthenticator
 from .browser import ENV_PAGE, VirtualBucket, default_page_path, format_local_time, show_browser
 from .engine import SyncEvent, SyncRefused, is_case_collision, sync_from_bucket, sync_to_bucket
@@ -350,6 +351,10 @@ def browse(folder: Path | None, bucket: str | None, prefix: str | None, page: Pa
     With FOLDER it opens that virtual bucket. A folder that is not a
     virtual bucket becomes one of --bucket. A folder that does not exist
     is created, and filled with placeholders from a listing of the bucket.
+
+    The actions of installed plugins, such as validators of a dataset,
+    are offered as buttons; a plugin that fails to load is reported and
+    left out.
     """
     if folder is None and (bucket is not None or prefix is not None):
         raise click.UsageError("--bucket and --prefix go with FOLDER.")
@@ -361,7 +366,12 @@ def browse(folder: Path | None, bucket: str | None, prefix: str | None, page: Pa
     except (VirtualBucketError, OSError) as error:
         # An OSError is a folder that cannot be created, read or written
         raise click.ClickException(str(error)) from error
-    show_browser(virtual_bucket, make_storage(), page, update_on_ready=is_new_folder)
+    actions, failures = load_actions()
+    for name, error in failures:
+        click.echo(f'Warning: the action "{name}" of a plugin was not loaded: {error}', err=True)
+    show_browser(
+        virtual_bucket, make_storage(), page, update_on_ready=is_new_folder, actions=actions
+    )
 
 
 @main.group()

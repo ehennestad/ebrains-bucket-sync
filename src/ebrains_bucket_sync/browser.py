@@ -6,7 +6,9 @@ events such as "state", both with JSON data, as its header comment
 describes. This module is the Python host, as
 ebrains.bucket.app.VirtualBucketBrowser is the MATLAB one: VirtualBucket
 holds the folder and the state of its files, Host carries out the
-requests, and show_browser puts the page in a pywebview window.
+requests, and show_browser puts the page in a pywebview window. The
+actions of plugins (actions.Action) are given to Host, which offers
+them to the page and runs them.
 
 Threads: pywebview calls the API object on a new thread for each request
 of the page, so one request can run while another waits. Host.request
@@ -28,13 +30,14 @@ import sys
 import threading
 import time
 import webbrowser
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
 from urllib.parse import quote
 
+from .actions import Action, ActionContext, action_data, check_actions
 from .engine import LocalFileChanged, download_object, never_synced
 from .local import compute_md5, list_local_files, local_file_entry
 from .model import BucketStorage, FileEntry, ListingProgressStorage
@@ -278,7 +281,13 @@ class VirtualBucket:
         self.manifest = entries
 
     def state_data(
-        self, *, message: str = "", reveal_label: str = "", label: str = "", has_list: bool = False
+        self,
+        *,
+        message: str = "",
+        reveal_label: str = "",
+        label: str = "",
+        has_list: bool = False,
+        actions: Sequence[Action] = (),
     ) -> dict[str, Any]:
         """The data of the state event, as the page's header describes it."""
         return {
@@ -287,6 +296,7 @@ class VirtualBucket:
             "prefix": self.info.prefix,
             "label": label,
             "hasList": has_list,
+            "actions": [action_data(action) for action in actions],
             "isListed": self.is_listed,
             "listedAt": format_local_time(self.info.listed_at),
             "revealLabel": reveal_label,
@@ -338,6 +348,10 @@ class Host:
             and "Change root" do nothing. show_browser sets it to the
             folder dialog of the window once that exists.
         set_title: Sets the title of the window. Nothing by default.
+        actions: The actions the page offers beyond its own, in the
+            order of their buttons (see actions.Action). Their ids must
+            differ and their scopes be known, or the host is refused with
+            a ValueError.
     """
 
     def __init__(
@@ -351,10 +365,13 @@ class Host:
         update_on_ready: bool = False,
         choose_folder: Callable[[str, str], str | None] | None = None,
         set_title: Callable[[str], object] | None = None,
+        actions: Sequence[Action] = (),
     ) -> None:
+        check_actions(actions)
         self.bucket = virtual_bucket
         self.choose_folder = choose_folder
         self.set_title = set_title
+        self.actions = list(actions)
         self._storage = storage
         self._page = page
         self._run_command = run_command or _run_command
@@ -457,6 +474,8 @@ class Host:
             self._reveal(paths[0])
         elif name == "openOnline":
             self._open_url(bucket_web_url(self._open_bucket().info.bucket))
+        elif name == "runAction":
+            self._run_action(str(payload["id"]), paths)
         # The page sends no other requests
 
     def close(self) -> None:
@@ -880,6 +899,68 @@ class Host:
         """Show a file or folder in the file manager of the system."""
         self._run_system_command(reveal_command(self._open_bucket().folder / path))
 
+    # ---------------------------------------------------------------- Actions
+
+    def _run_action(self, action_id: str, selected: list[str]) -> None:
+        """Download the files an action needs, run it, and show its message.
+
+        The files are read again first, as a download reads them, so the
+        action sees them as they are now. A download that fails or is
+        cancelled stops before the action runs. The action runs under a
+        progress dialog of its own, whose Cancel the action notices
+        through its context; an exception of the action is reported as an
+        alert and the files are shown as the action left them.
+        """
+        actions = {action.id: action for action in self.actions}
+        if action_id not in actions:
+            raise ValueError(f'The browser offers no action "{action_id}".')
+        action = actions[action_id]
+        bucket = self._open_bucket()
+        if selected:
+            bucket.rescan(selected)
+        else:
+            bucket.scan()
+
+        self._send("busy", {"busy": True})
+        try:
+            required = action.required_paths(bucket.files, selected)
+            rows = [row for row in bucket.rows(required) if row.state == "online_only"]
+            if rows and not self._download_rows(rows):
+                return
+            self._message = self._run_action_with_progress(action, selected)
+        finally:
+            self._send("busy", {"busy": False})
+        self._refresh()
+
+    def _run_action_with_progress(self, action: Action, selected: list[str]) -> str:
+        bucket = self._open_bucket()
+        progress_id = f"action-{action.id}"
+        context = ActionContext(
+            folder=bucket.folder,
+            bucket=bucket.info.bucket,
+            prefix=bucket.info.prefix,
+            files=list(bucket.files),
+            progress=lambda message, value: self._progress(
+                progress_id, message=message, value=value
+            ),
+            check_cancelled=lambda: self._check_cancelled(progress_id),
+            confirm=self._confirm,
+            alert=lambda title, message, icon: self._alert(title, message, icon=icon),
+            open_file=lambda path: self._run_system_command(open_file_command(path)),
+        )
+        self._open_progress(
+            progress_id, title=action.label, message=f"Running {action.label}...", cancelable=True
+        )
+        try:
+            return action.run(context, selected)
+        except BrowserCancelled:
+            return f"{action.label} was cancelled."
+        except Exception as error:
+            self._alert(f"{action.label} failed", str(error) or type(error).__name__)
+            return f"{action.label} failed."
+        finally:
+            self._close_progress(progress_id)
+
     def _run_system_command(self, command: list[str]) -> None:
         """Run a command of the operating system, and report a failure.
 
@@ -905,6 +986,7 @@ class Host:
                 reveal_label=reveal_action_name(),
                 label=self._label(),
                 has_list=True,
+                actions=self.actions,
             ),
         )
 
@@ -1155,16 +1237,17 @@ def show_browser(
     page_path: Path,
     *,
     update_on_ready: bool = False,
+    actions: Sequence[Action] = (),
 ) -> None:
     """Show the page in a window, and return when the window is closed.
 
     Without a virtual bucket the window opens on the list of virtual
-    buckets.
+    buckets. actions are offered in the window, as Host takes them.
     """
     import webview  # loads the GUI toolkit, which only the browser needs
 
     page = PywebviewPage()
-    host = Host(virtual_bucket, storage, page, update_on_ready=update_on_ready)
+    host = Host(virtual_bucket, storage, page, update_on_ready=update_on_ready, actions=actions)
     title = (
         "Virtual buckets"
         if virtual_bucket is None

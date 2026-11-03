@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from ebrains_bucket_sync.actions import ActionContext
 from ebrains_bucket_sync.browser import (
     ENV_PAGE,
     PAGE_FILE,
@@ -265,6 +266,7 @@ def test_ready_sends_the_state_of_the_files(folder, storage, monkeypatch):
         "prefix": "results/",
         "label": "",
         "hasList": True,
+        "actions": [],
         "isListed": True,
         "listedAt": local_time(LISTED_AT),
         "revealLabel": "Show in Finder",
@@ -1397,3 +1399,218 @@ def test_a_list_change_that_fails_is_reported_once_and_the_list_still_shows(stor
     assert [alert[0] for alert in page.alerts] == ["Could not change the list of virtual buckets"]
     assert page.named("buckets")[-1]["rows"] == []
     assert registry_path().read_text() == "{"
+
+
+# ---------------------------------------------------------------- Actions of plugins
+
+
+class FakeAction:
+    """An action that records what it was called with, and answers as told.
+
+    required are the paths it asks to have downloaded, result the message
+    it returns, and failure an exception it raises instead. steps is what
+    run does before it returns: "progress" reports progress, "cancel"
+    checks for Cancel, "open" opens a report.
+    """
+
+    def __init__(
+        self,
+        id="fake",
+        label="Fake action",
+        scope="selection",
+        title="",
+        required=(),
+        result="Done.",
+        failure=None,
+        steps=(),
+    ):
+        self.id = id
+        self.label = label
+        self.scope = scope
+        self.title = title
+        self.required = list(required)
+        self.result = result
+        self.failure = failure
+        self.steps = steps
+        self.required_calls: list[list[str]] = []
+        self.calls: list[tuple[ActionContext, list[str]]] = []
+
+    def required_paths(self, files, selected):
+        self.required_calls.append(list(selected))
+        return list(self.required)
+
+    def run(self, context, selected):
+        self.calls.append((context, list(selected)))
+        for step in self.steps:
+            if step == "progress":
+                context.progress("Half way", 0.5)
+            elif step == "cancel":
+                context.check_cancelled()
+            elif step == "open":
+                context.open_file(context.report_path("report.txt"))
+        if self.failure is not None:
+            raise self.failure
+        return self.result
+
+
+def make_host_with_actions(folder, storage, actions, **kwargs):
+    page = StubPage()
+    host = Host(VirtualBucket.open(folder), storage, page, actions=actions, **kwargs)
+    page.host = host
+    host.request("ready")
+    return host, page
+
+
+def test_actions_are_offered_in_the_state(folder, storage):
+    make_virtual_bucket(folder)
+    actions = [
+        FakeAction("validate", "Validate", "bucket", "Check the dataset"),
+        FakeAction("inspect", "Inspect", "selection"),
+    ]
+
+    _, page = make_host_with_actions(folder, storage, actions)
+
+    assert page.state["actions"] == [
+        {"id": "validate", "label": "Validate", "scope": "bucket", "title": "Check the dataset"},
+        {"id": "inspect", "label": "Inspect", "scope": "selection", "title": ""},
+    ]
+
+
+def test_host_without_actions_offers_none(folder, storage):
+    make_virtual_bucket(folder)
+
+    _, page = make_host(folder, storage)
+
+    assert page.state["actions"] == []
+
+
+def test_actions_with_the_same_id_are_refused(folder, storage):
+    make_virtual_bucket(folder)
+
+    with pytest.raises(ValueError, match='Two actions have the id "fake"'):
+        Host(VirtualBucket.open(folder), storage, StubPage(), actions=[FakeAction(), FakeAction()])
+
+
+def test_action_of_an_unknown_scope_is_refused(folder, storage):
+    make_virtual_bucket(folder)
+
+    with pytest.raises(ValueError, match='scope of the action "fake" is "folder"'):
+        Host(VirtualBucket.open(folder), storage, StubPage(), actions=[FakeAction(scope="folder")])
+
+
+def test_run_action_downloads_the_files_it_needs_first(folder, storage):
+    storage.put("b", "a.txt", b"data", last_modified=OBJECT_TIME)
+    storage.put("b", "b.txt", b"more", last_modified=OBJECT_TIME)
+    make_virtual_bucket(folder, manifest=[FileEntry("a.txt", 4), FileEntry("b.txt", 4)])
+    write(folder, "a.txt", b"")
+    write(folder, "b.txt", b"")
+    action = FakeAction(required=["a.txt"])
+    host, page = make_host_with_actions(folder, storage, [action])
+
+    request(host, "runAction", id="fake", paths=["a.txt", "b.txt"])
+
+    assert (folder / "a.txt").read_bytes() == b"data"
+    assert (folder / "b.txt").read_bytes() == b"", "Only the required files are downloaded"
+    assert action.required_calls == [["a.txt", "b.txt"]]
+    context, selected = action.calls[0]
+    assert selected == ["a.txt", "b.txt"]
+    assert context.folder == folder.resolve()
+    assert context.bucket == "b"
+    assert {row.path: row.state for row in context.files} == {
+        "a.txt": "downloaded",
+        "b.txt": "online_only",
+    }, "The action sees the files after the download"
+    assert page.state["message"] == "Done."
+    assert [data["title"] for data in page.named("progress") if "title" in data] == [
+        "Download",
+        "Fake action",
+    ]
+    assert page.named("progressClose") == [{"id": "download"}, {"id": "action-fake"}]
+    assert [data["busy"] for data in page.named("busy")] == [True, False]
+
+
+def test_action_on_the_bucket_runs_with_no_paths(folder, storage):
+    make_virtual_bucket(folder)
+    write(folder, "a.txt", b"data")
+    action = FakeAction(scope="bucket")
+    host, _ = make_host_with_actions(folder, storage, [action])
+
+    request(host, "runAction", id="fake", paths=[])
+
+    assert action.required_calls == [[]]
+    context, selected = action.calls[0]
+    assert selected == []
+    assert [row.path for row in context.files] == ["a.txt"]
+
+
+def test_action_does_not_run_when_a_download_fails(folder, storage):
+    storage.put("b", "a.txt", b"data", last_modified=OBJECT_TIME)
+    storage.errors["a.txt"] = RuntimeError("The bucket is away.")
+    make_virtual_bucket(folder, manifest=[FileEntry("a.txt", 4)])
+    write(folder, "a.txt", b"")
+    action = FakeAction(required=["a.txt"])
+    host, page = make_host_with_actions(folder, storage, [action])
+
+    request(host, "runAction", id="fake", paths=["a.txt"])
+
+    assert action.calls == []
+    assert page.alerts == [("Download stopped", "error")]
+    assert page.state["message"] == "0 of 1 files were downloaded."
+
+
+def test_failing_action_is_reported(folder, storage):
+    make_virtual_bucket(folder)
+    action = FakeAction(failure=RuntimeError("The validator is not installed."))
+    host, page = make_host_with_actions(folder, storage, [action])
+
+    request(host, "runAction", id="fake", paths=[])
+
+    assert page.alerts == [("Fake action failed", "error")]
+    assert page.named("alert")[0]["message"] == "The validator is not installed."
+    assert page.state["message"] == "Fake action failed."
+    assert page.named("progressClose") == [{"id": "action-fake"}]
+    assert [data["busy"] for data in page.named("busy")] == [True, False]
+
+
+def test_cancelled_action_says_so(folder, storage):
+    make_virtual_bucket(folder)
+    action = FakeAction(steps=["progress", "cancel"])
+    host, page = make_host_with_actions(folder, storage, [action])
+    page.cancel_after = 1
+
+    request(host, "runAction", id="fake", paths=[])
+
+    assert page.named("progress")[1] == {"id": "action-fake", "message": "Half way", "value": 0.5}
+    assert page.state["message"] == "Fake action was cancelled."
+    assert page.alerts == []
+
+
+def test_unknown_action_is_reported(folder, storage):
+    make_virtual_bucket(folder)
+    host, page = make_host_with_actions(folder, storage, [FakeAction()])
+
+    request(host, "runAction", id="other", paths=[])
+
+    assert page.alerts == [("Something went wrong", "error")]
+    assert page.named("alert")[0]["message"] == 'The browser offers no action "other".'
+
+
+def test_action_keeps_its_report_out_of_sight_and_opens_it(folder, storage):
+    make_virtual_bucket(folder)
+    write(folder, "a.txt", b"data")
+    commands = []
+    action = FakeAction(steps=["open"])
+    host, page = make_host_with_actions(
+        folder, storage, [action], run_command=lambda command: commands.append(command) or _ok()
+    )
+
+    request(host, "runAction", id="fake", paths=[])
+
+    report = folder.resolve() / ".ebrains" / "reports" / "report.txt"
+    assert report.parent.is_dir()
+    assert commands == [open_file_command(report)]
+    assert page.state["files"]["path"] == ["a.txt"], "The reports folder is not shown"
+
+
+def _ok():
+    return subprocess.CompletedProcess([], 0, "", "")

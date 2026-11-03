@@ -81,6 +81,19 @@ The list is `virtual-buckets.json` in the configuration folder (see [Authenticat
 
 A push of a virtual bucket is refused unless the bucket and `--prefix` are the ones it stands for, leaves the placeholders alone, and never syncs the `.ebrains` folder. A pull deletes the placeholders of objects removed from the bucket. After either, the manifest in `.ebrains` records what the bucket holds.
 
+### Plugins of the browser
+
+A package can add buttons to the browser that run a tool on the files of a virtual bucket, such as a validator of the dataset. It registers each action in the entry point group `ebrains_bucket_sync.actions` of its `pyproject.toml`, naming a callable that takes no arguments and returns the action:
+
+```toml
+[project.entry-points."ebrains_bucket_sync.actions"]
+validate-bids = "my_package.actions:ValidateBids"
+```
+
+An action has an `id`, a `label` for its button, a `title` for the tooltip and a `scope`: `"selection"` runs on the files selected in the browser, also from the menus of files and folders, and `"bucket"` on the whole virtual bucket. Its `required_paths(files, selected)` names the files that must be local, which the browser downloads before it calls `run(context, selected)`; the message `run` returns is shown below the file list. The context carries the folder, the bucket, the state of every file, the dialogs of the browser (`progress`, `check_cancelled`, `confirm`, `alert`) and `open_file`, and `context.report_path(name)` gives a path below `.ebrains/reports`, which no sync touches and the browser does not show. `ebrains_bucket_sync.actions` documents the protocol, and [ebrains-curation-tools](https://github.com/ehennestad/ebrains-curation-tools) is a package of such actions.
+
+The actions appear once the package is installed in the same environment as `ebrains-bucket-sync`; with pipx that is `pipx inject ebrains-bucket-sync my-package`, with uv `uv tool install ebrains-bucket-sync --with my-package`. A plugin that fails to load is reported when `browse` starts and left out. `show_browser` and `Host` take actions directly, as `actions=`, for programs that compose the browser themselves.
+
 ### From Python
 
 ```python
