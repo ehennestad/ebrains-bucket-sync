@@ -2,6 +2,8 @@
 
 import json
 import os
+import stat
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -249,13 +251,48 @@ def test_unpinning_keeps_the_entry():
     assert registry.entry_of("/a") == FolderEntry("/a", "a", "", False, OPENED_AT)
 
 
-def test_paths_are_recorded_as_given():
+def test_paths_are_recorded_in_their_normalized_form(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     registry = Registry()
 
-    registry.record_open(Path("/a"), "a", "", OPENED_AT)
+    registry.record_open("a", "a", "", OPENED_AT)
+    registry.set_pinned(str(tmp_path / "a") + os.sep, True)
+    registry.set_pinned(tmp_path / "b" / "..", True, bucket="b", prefix="")
 
-    assert registry.entry_of("/a") is not None
-    assert registry.entry_of(Path("/a")) is not None
+    assert list(registry.folders) == [str(tmp_path / "a"), str(tmp_path)]
+    assert registry.entry_of(Path("a")).pinned is True
+    registry.remove_folder("./a")
+    assert list(registry.folders) == [str(tmp_path)]
+
+
+def test_set_root_normalizes_the_path_and_none_removes_it(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    registry = Registry()
+
+    registry.set_root("buckets" + os.sep)
+    assert registry.root == str(tmp_path / "buckets")
+    registry.set_root(None)
+    assert registry.root is None
+
+
+def test_an_empty_root_is_refused_before_it_is_written(tmp_path):
+    path = tmp_path / "virtual-buckets.json"
+
+    with pytest.raises(ValueError, match='root is ""'):
+        write_registry(Registry(root=""), path)
+
+    assert not path.exists()
+    write_registry(Registry(root=None), path)
+    assert read_registry(path).root is None
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Folder modes are a POSIX matter.")
+def test_the_configuration_folder_is_created_for_the_user_alone(tmp_path):
+    path = tmp_path / "config" / "virtual-buckets.json"
+
+    write_registry(Registry(), path)
+
+    assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
 
 
 def test_a_label_of_a_bucket_without_a_name_is_refused():

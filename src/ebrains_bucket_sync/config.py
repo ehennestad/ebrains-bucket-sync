@@ -27,6 +27,8 @@ def config_dir(
 ) -> Path:
     """The configuration folder, which need not exist yet.
 
+    Raises ValueError when the environment variable holds a relative path.
+
     Args:
         platform: sys.platform of the machine, for tests.
         environ: The environment, os.environ by default.
@@ -36,6 +38,9 @@ def config_dir(
         environ = os.environ
     override = environ.get(CONFIG_DIR_VARIABLE, "")
     if override:
+        # A relative folder would be a different one in each process
+        if not os.path.isabs(override):
+            raise ValueError(f"{CONFIG_DIR_VARIABLE} must be an absolute path, not {override!r}.")
         return Path(override)
     if home is None:
         home = Path.home()

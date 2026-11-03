@@ -35,8 +35,8 @@ def normalize_path(path: str | os.PathLike[str]) -> str:
     separator or "." and ".." segments. Links are not resolved, so a
     folder below a root that is a link is the same folder as the one a
     scan of the root finds. Two paths are the same folder when they are
-    equal as text, so every path given to the registry goes through this
-    first.
+    equal as text, so the methods of Registry put every path given to
+    them through this.
     """
     return os.path.normpath(os.path.abspath(os.fspath(path)))
 
@@ -86,6 +86,13 @@ class Registry:
     labels: dict[str, str] = field(default_factory=dict)
     folders: dict[str, FolderEntry] = field(default_factory=dict)
 
+    def set_root(self, path: str | os.PathLike[str] | None) -> None:
+        """Set the folder where new virtual buckets are made, or remove it with None.
+
+        The folder is recorded as normalize_path writes it.
+        """
+        self.root = None if path is None else normalize_path(path)
+
     def label_of(self, bucket: str) -> str | None:
         return self.labels.get(bucket)
 
@@ -102,7 +109,7 @@ class Registry:
             self.labels.pop(bucket, None)
 
     def entry_of(self, path: str | os.PathLike[str]) -> FolderEntry | None:
-        return self.folders.get(os.fspath(path))
+        return self.folders.get(normalize_path(path))
 
     def record_open(
         self, path: str | os.PathLike[str], bucket: str, prefix: str, opened_at: datetime
@@ -111,12 +118,12 @@ class Registry:
 
         The entry keeps its pinned flag; a folder without one is recorded
         unpinned. opened_at is an aware datetime, recorded in UTC to the
-        second, as the file holds it. The path is recorded as given (see
-        normalize_path). A bucket that is not a nonempty text, or a prefix
-        that is not "" or a folder name with a trailing "/", is a
-        ValueError, since the file could not be read back.
+        second, as the file holds it. The path is recorded as normalize_path
+        writes it. A bucket that is not a nonempty text, or a prefix that
+        is not "" or a folder name with a trailing "/", is a ValueError,
+        since the file could not be read back.
         """
-        key = os.fspath(path)
+        key = normalize_path(path)
         _check_entry_fields(bucket, prefix)
         if opened_at.tzinfo is None:
             raise ValueError("opened_at must be an aware datetime")
@@ -139,7 +146,7 @@ class Registry:
         which needs its bucket and prefix (checked as in record_open);
         unpinning one changes nothing.
         """
-        key = os.fspath(path)
+        key = normalize_path(path)
         entry = self.folders.get(key)
         if entry is None:
             if not pinned:
@@ -152,7 +159,7 @@ class Registry:
 
     def remove_folder(self, path: str | os.PathLike[str]) -> None:
         """Forget a folder. The folder itself is left as it is."""
-        self.folders.pop(os.fspath(path), None)
+        self.folders.pop(normalize_path(path), None)
 
 
 def _check_entry_fields(bucket: str, prefix: str) -> None:
@@ -189,8 +196,14 @@ def read_registry(path: Path | None = None) -> Registry:
 
 
 def write_registry(registry: Registry, path: Path | None = None) -> None:
-    """Write the registry so that an interrupted write leaves the old file."""
-    write_atomically(path or registry_path(), format_registry(registry))
+    """Write the registry so that an interrupted write leaves the old file.
+
+    The folder of the file is created readable to the user alone, as the
+    token store creates the same folder, whichever comes first.
+    """
+    path = path or registry_path()
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    write_atomically(path, format_registry(registry))
 
 
 def parse_registry(text: str | bytes, *, name: str = REGISTRY_FILE) -> Registry:
@@ -285,7 +298,13 @@ def parse_registry(text: str | bytes, *, name: str = REGISTRY_FILE) -> Registry:
 
 
 def format_registry(registry: Registry) -> str:
-    """The text of the registry file, with buckets and folders sorted by name."""
+    """The text of the registry file, with buckets and folders sorted by name.
+
+    A root of "" is a ValueError: the file holds a path or null, and the
+    reader refuses "".
+    """
+    if registry.root == "":
+        raise ValueError('root is "": use None for no root')
     data = {
         "format_version": FORMAT_VERSION,
         "root": registry.root,

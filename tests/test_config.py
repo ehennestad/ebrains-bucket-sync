@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+
 from ebrains_bucket_sync.auth import TokenStore
 from ebrains_bucket_sync.config import CONFIG_DIR_VARIABLE, config_dir
 
@@ -46,6 +48,12 @@ def test_the_environment_variable_names_the_folder_on_every_platform():
 
     for platform in ("darwin", "win32", "linux"):
         assert config_dir(platform=platform, environ=environ, home=HOME) == Path("/custom")
+
+
+@pytest.mark.parametrize("value", ["relative/config", "~/config"])
+def test_a_relative_environment_variable_is_refused(value):
+    with pytest.raises(ValueError, match="EBRAINS_BUCKET_SYNC_CONFIG_DIR must be an absolute path"):
+        config_dir(platform="linux", environ={CONFIG_DIR_VARIABLE: value}, home=HOME)
 
 
 def test_an_empty_environment_variable_is_ignored():

@@ -141,7 +141,7 @@ The registry, and the other files an implementation keeps for a user, are in the
 | Windows | `%LOCALAPPDATA%\ebrains-bucket-sync`, with `%USERPROFILE%\AppData\Local` where `LOCALAPPDATA` is not set or empty |
 | other | `$XDG_CONFIG_HOME/ebrains-bucket-sync`, with `~/.config` where `XDG_CONFIG_HOME` is not set or empty |
 
-`~` is the home folder of the user. The environment variable `EBRAINS_BUCKET_SYNC_CONFIG_DIR`, when set and not empty, names the folder instead, for tests and for a machine where the folder above is not the user's own. The folder is created when a file is first written to it.
+`~` is the home folder of the user. The environment variable `EBRAINS_BUCKET_SYNC_CONFIG_DIR`, when set and not empty, names the folder instead, as an absolute path, for tests and for a machine where the folder above is not the user's own; a relative path is refused, since each process would read it against its own working folder. The folder is created when a file is first written to it.
 
 ### The registry file
 
