@@ -1304,7 +1304,7 @@ def test_a_registry_that_cannot_be_read_gives_an_empty_list_with_an_alert(storag
     assert page.named("buckets")[-1]["root"] == ""
 
 
-def test_a_registry_that_cannot_be_written_warns_and_the_bucket_opens(folder, storage):
+def test_a_registry_that_cannot_be_read_warns_and_the_bucket_opens(folder, storage):
     make_virtual_bucket(folder, "b")
     registry_path().parent.mkdir(parents=True, exist_ok=True)
     registry_path().write_text("{")
@@ -1314,3 +1314,85 @@ def test_a_registry_that_cannot_be_written_warns_and_the_bucket_opens(folder, st
 
     assert page.state["bucketName"] == "b"
     assert page.state["label"] == ""
+    assert page.alerts[-1] == ("The folder was not added to the list", "warning")
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32" or os.geteuid() == 0, reason="Needs a folder the user cannot write."
+)
+def test_a_registry_that_cannot_be_written_warns_and_the_bucket_opens(folder, storage):
+    make_virtual_bucket(folder, "b")
+    config = registry_path().parent
+    config.mkdir(parents=True, exist_ok=True)
+    config.chmod(0o500)
+    try:
+        with pytest.warns(RegistryWarning, match="not recorded"):
+            host, page = make_host(folder, storage)
+    finally:
+        config.chmod(0o700)
+
+    assert page.state["bucketName"] == "b"
+    assert page.alerts[-1] == ("The folder was not added to the list", "warning")
+    assert not registry_path().exists()
+
+
+def test_opening_a_plain_folder_from_the_list_is_reported(tmp_path, storage):
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    host, page = make_list_host(storage, choose_folder=lambda start, title: str(plain))
+
+    request(host, "openBucket", path=str(plain))
+    request(host, "chooseFolder")
+
+    assert [alert[0] for alert in page.alerts] == ["Could not open the folder"] * 2
+    assert "is not a virtual bucket" in page.named("alert")[-1]["message"]
+    assert host.bucket is None
+    assert not (plain / ".ebrains").exists()
+
+
+def test_new_bucket_needs_an_absolute_folder(tmp_path, storage, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    host, page = make_list_host(storage)
+
+    request(host, "newBucket", bucket="b", prefix="", folder="~/relative")
+
+    assert page.alerts[-1][0] == "Could not open the folder"
+    assert "absolute path" in page.named("alert")[-1]["message"]
+    assert host.bucket is None
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_new_bucket_onto_a_file_is_reported(tmp_path, storage):
+    target = tmp_path / "file"
+    target.write_text("x")
+    host, page = make_list_host(storage)
+
+    request(host, "newBucket", bucket="b", prefix="", folder=str(target))
+
+    assert page.alerts[-1][0] == "Could not open the folder"
+    assert host.bucket is None
+    assert target.read_text() == "x"
+
+
+def test_a_root_is_sent_as_the_rows_below_it_are_written(tmp_path, storage):
+    root = tmp_path / "root"
+    scanned = make_virtual_bucket_folder(root / "d-1", "d-1")
+    set_root(str(root) + os.sep)
+
+    host, page = make_list_host(storage)
+
+    buckets = page.named("buckets")[-1]
+    assert buckets["root"] == str(root)
+    assert buckets["rows"][0]["path"] == str(scanned)
+
+
+def test_a_list_change_that_fails_is_reported_once_and_the_list_still_shows(storage):
+    host, page = make_list_host(storage)
+    registry_path().parent.mkdir(parents=True, exist_ok=True)
+    registry_path().write_text("{")
+
+    request(host, "setLabel", bucket="b", label="x")
+
+    assert [alert[0] for alert in page.alerts] == ["Could not change the list of virtual buckets"]
+    assert page.named("buckets")[-1]["rows"] == []
+    assert registry_path().read_text() == "{"

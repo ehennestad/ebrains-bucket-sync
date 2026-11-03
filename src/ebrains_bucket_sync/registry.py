@@ -224,12 +224,13 @@ def update_registry(change: Callable[[Registry], object], path: Path | None = No
 
 def record_folder_opened(
     folder: str | os.PathLike[str], bucket: str, prefix: str, path: Path | None = None
-) -> None:
+) -> str | None:
     """Record that a folder was opened as a virtual bucket of bucket and prefix, now.
 
     The folder is recorded as normalize_path writes it. The registry is a
     convenience of the user, so one that cannot be read or written is
-    reported as a RegistryWarning and the caller goes on.
+    reported as a RegistryWarning, and as the returned text, and the
+    caller goes on. None is returned when the folder was recorded.
     """
     absolute = normalize_path(folder)
     opened_at = datetime.now(timezone.utc)
@@ -238,11 +239,10 @@ def record_folder_opened(
             lambda registry: registry.record_open(absolute, bucket, prefix, opened_at), path
         )
     except (RegistryError, OSError) as error:
-        warnings.warn(
-            f"The folder was not recorded in the list of virtual buckets: {error}",
-            RegistryWarning,
-            stacklevel=2,
-        )
+        problem = f"The folder was not recorded in the list of virtual buckets: {error}"
+        warnings.warn(problem, RegistryWarning, stacklevel=2)
+        return problem
+    return None
 
 
 def parse_registry(text: str | bytes, *, name: str = REGISTRY_FILE) -> Registry:

@@ -419,8 +419,18 @@ def buckets_unpin(folder: Path) -> None:
 @buckets.command("forget")
 @click.argument("folder", type=click.Path(path_type=Path))
 def buckets_forget(folder: Path) -> None:
-    """Remove FOLDER from the list. The folder itself is left as it is."""
+    """Remove FOLDER from the list. The folder itself is left as it is.
+
+    A virtual bucket directly below the root folder is listed because it
+    is there, so it cannot be removed from the list while it is.
+    """
     path = normalize_path(folder)
+    registry = _read_registry()
+    if registry.root and path in root_children(registry.root) and bucket_info_of(path):
+        raise click.ClickException(
+            f'"{path}" is directly below the root folder and stays listed as long as it is '
+            "there. Move or delete the folder to remove it from the list."
+        )
     _update_registry(lambda registry: registry.remove_folder(path))
 
 
@@ -440,7 +450,7 @@ def buckets_root(folder: Path | None, clear: bool) -> None:
         raise click.UsageError("Give FOLDER or --clear, not both.")
     if folder is None and not clear:
         root = _read_registry().root
-        click.echo(root if root else "No root folder is set.")
+        click.echo(normalize_path(root) if root else "No root folder is set.")
         return
     root = None if clear else normalize_path(folder)
     _update_registry(lambda registry: setattr(registry, "root", root))
@@ -461,7 +471,7 @@ def _registry_rows() -> list[ListedBucket]:
 def _update_registry(change: Callable[[Registry], object]) -> None:
     try:
         update_registry(change)
-    except (RegistryError, OSError) as error:
+    except (RegistryError, OSError, ValueError) as error:
         raise click.ClickException(str(error)) from error
 
 

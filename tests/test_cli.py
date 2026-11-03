@@ -703,6 +703,36 @@ def test_buckets_pin_records_a_folder_below_the_root_and_refuses_an_unlisted_one
     assert "is not in the list of virtual buckets" in unlisted.output
 
 
+def test_buckets_label_of_a_bucket_without_a_name_is_an_error(runner):
+    result = runner.invoke(cli.main, ["buckets", "label", "", "x"])
+
+    assert result.exit_code == 1
+    assert "not the name of a bucket" in result.output
+    assert not registry_path().exists()
+
+
+def test_buckets_forget_refuses_a_folder_below_the_root(runner, tmp_path):
+    root = tmp_path / "root"
+    (root / "d-1").mkdir(parents=True)
+    write_bucket_info(root / "d-1", BucketInfo("d-1"))
+    assert runner.invoke(cli.main, ["buckets", "root", str(root)]).exit_code == 0
+
+    result = runner.invoke(cli.main, ["buckets", "forget", str(root / "d-1")])
+
+    assert result.exit_code == 1
+    assert "directly below the root folder" in result.output
+    assert runner.invoke(cli.main, ["buckets", "list"]).output.startswith("  d-1\n")
+
+
+def test_buckets_root_records_a_relative_folder_as_absolute(runner, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "buckets").mkdir()
+
+    assert runner.invoke(cli.main, ["buckets", "root", "buckets"]).exit_code == 0
+
+    assert runner.invoke(cli.main, ["buckets", "root"]).output == f"{tmp_path / 'buckets'}\n"
+
+
 def test_buckets_commands_report_a_registry_that_cannot_be_read(runner):
     registry_path().parent.mkdir(parents=True, exist_ok=True)
     registry_path().write_text("{")

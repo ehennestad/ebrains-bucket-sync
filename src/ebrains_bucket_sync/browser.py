@@ -41,6 +41,7 @@ from .model import BucketStorage, FileEntry, ListingProgressStorage
 from .paths import InvalidPrefixError, normalize_prefix
 from .registry import (
     ListedBucket,
+    Registry,
     RegistryError,
     bucket_info_of,
     list_virtual_buckets,
@@ -414,9 +415,15 @@ class Host:
         elif name == "openBucket":
             self._open_folder(str(payload["path"]))
         elif name == "newBucket":
-            self._open_folder(
-                str(payload["folder"]), str(payload["bucket"]), str(payload.get("prefix", ""))
-            )
+            folder = str(payload["folder"])
+            if not os.path.isabs(folder):
+                self._alert(
+                    "Could not open the folder",
+                    "Give the absolute path of the folder of the new virtual bucket, such as "
+                    "one below the root folder.",
+                )
+                return
+            self._open_folder(folder, str(payload["bucket"]), str(payload.get("prefix", "")))
         elif name == "chooseFolder":
             folder = self._ask_for_folder("Choose the folder of a virtual bucket")
             if folder:
@@ -425,19 +432,15 @@ class Host:
             folder = self._ask_for_folder("Choose the folder where new virtual buckets are made")
             if folder:
                 root = normalize_path(folder)
-                update_registry(lambda registry: setattr(registry, "root", root))
-                self._send_buckets()
+                self._change_list(lambda registry: setattr(registry, "root", root))
         elif name == "setLabel":
             bucket, label = str(payload["bucket"]), str(payload["label"])
-            update_registry(lambda registry: registry.set_label(bucket, label))
-            self._send_buckets()
+            self._change_list(lambda registry: registry.set_label(bucket, label))
         elif name == "setPinned":
             self._pin_folder(str(payload["path"]), bool(payload["pinned"]))
-            self._send_buckets()
         elif name == "removeFolder":
             path = str(payload["path"])
-            update_registry(lambda registry: registry.remove_folder(path))
-            self._send_buckets()
+            self._change_list(lambda registry: registry.remove_folder(path))
         elif name == "refresh":
             self._message = ""
             self._refresh()
@@ -506,15 +509,32 @@ class Host:
         self._send_buckets()
 
     def _record_open(self) -> None:
+        """Record the bucket shown in the registry; a registry that fails is reported once."""
         bucket = self._open_bucket()
-        record_folder_opened(bucket.opened_path, bucket.info.bucket, bucket.info.prefix)
+        problem = record_folder_opened(bucket.opened_path, bucket.info.bucket, bucket.info.prefix)
+        if problem is not None:
+            self._alert("The folder was not added to the list", problem, icon="warning")
+
+    def _change_list(self, change: Callable[[Registry], object]) -> None:
+        """Change the registry and show the list again.
+
+        A registry that cannot be read or written is reported, and the
+        list is sent as it can be read, once.
+        """
+        try:
+            update_registry(change)
+        except (RegistryError, OSError) as error:
+            self._alert("Could not change the list of virtual buckets", str(error))
+            self._send_buckets(report_failure=False)
+            return
+        self._send_buckets()
 
     def _pin_folder(self, path: str, pinned: bool) -> None:
         """Pin or unpin a folder of the list, recording one that has no entry yet."""
         row = next((row for row in self._listed if row.path == path), None)
         if row is None:
             raise ValueError(f'"{path}" is not in the list of virtual buckets.')
-        update_registry(
+        self._change_list(
             lambda registry: registry.set_pinned(path, pinned, bucket=row.bucket, prefix=row.prefix)
         )
 
@@ -528,19 +548,22 @@ class Host:
             pass  # the dialog starts where the toolkit likes
         return self.choose_folder(start or os.getcwd(), title)
 
-    def _send_buckets(self) -> None:
+    def _send_buckets(self, *, report_failure: bool = True) -> None:
         """Send the list of virtual buckets, which the page shows in place of a bucket.
 
-        A registry that cannot be read is reported, and the list is sent
-        empty, so that the page is usable all the same.
+        A registry that cannot be read is reported, unless the caller
+        reported it, and the list is sent empty, so that the page is
+        usable all the same. The root is sent as normalize_path writes
+        it, the form the rows below it have.
         """
         try:
             registry = read_registry()
             rows = list_virtual_buckets(registry, root_children(registry.root), bucket_info_of)
-            root = registry.root or ""
+            root = normalize_path(registry.root) if registry.root else ""
         except RegistryError as error:
             rows, root = [], ""
-            self._alert("Could not read the list of virtual buckets", str(error))
+            if report_failure:
+                self._alert("Could not read the list of virtual buckets", str(error))
         self._listed = rows
         self._send(
             "buckets",
@@ -1152,7 +1175,7 @@ def show_browser(
     page.window = window
 
     def choose_folder(start: str, title: str) -> str | None:
-        chosen = window.create_file_dialog(webview.FOLDER_DIALOG, directory=start)
+        chosen = window.create_file_dialog(webview.FileDialog.FOLDER, directory=start)
         return chosen[0] if chosen else None
 
     host.choose_folder = choose_folder

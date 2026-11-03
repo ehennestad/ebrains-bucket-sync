@@ -1,6 +1,6 @@
 {
   "repository": "https://github.com/ehennestad/EBRAINS-MATLAB",
   "path": "src/ebrains/+ebrains/+bucket/+app/resources/virtualBucketBrowser.html",
-  "commit": "9735a136343c0f9719f16218f5c7b494af1bb350",
-  "sha256": "18113d48a28cc646266e58846860eed6cc583234a3847d585098d35d4279701e"
+  "commit": "aec7428e9a05ada5e053450a1e65e299ed80df41",
+  "sha256": "7e9b7875af12a7c53450fdc291484e878cfaa357816a6d8c08269e648808eb8c"
 }
