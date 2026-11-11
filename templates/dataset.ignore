@@ -4,8 +4,11 @@
 #     ebrains-bucket-sync push my-dataset my-bucket --exclude-from dataset.ignore
 #
 # A pattern without "/" leaves out files and folders of that name in every
-# folder. A pattern with "/" is matched from the root of the synced folder.
-# The rules are those of spec/README.md, a subset of a .gitignore file: a
+# folder. A pattern with "/" in front of it or inside it is matched from the
+# root of the synced folder, so "/build" leaves out the build folder at the
+# root only. A trailing "/" is ignored, so ".git/" leaves out every ".git"
+# folder, and a file of that name too. The rules are those of
+# spec/README.md, which lists where they differ from a .gitignore file. A
 # line that starts with "!" is refused.
 
 # Version control
